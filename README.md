@@ -144,7 +144,7 @@ installiere die angebotene neue Version und starte Home Assistant danach neu.
 
 ## Versionen
 
-Diese Integration ist ein Entwicklungsstand in Version **0.6.0** und benötigt
+Diese Integration ist ein Entwicklungsstand in Version **0.7.1** und benötigt
 einen entsprechend aktualisierten Dienst. Sie wird
 unabhängig von der Website und dem Dienst versioniert. Vergleiche und Auswertungen
 sind nicht implementiert. Halte die Integration über HACS aktuell.
@@ -160,7 +160,7 @@ pwsh -NoProfile -File ./build-package.ps1 -DryRun
 pwsh -NoProfile -File ./build-package.ps1 -BuildPackage
 ```
 
-Das Archiv `dist/powermesh-energy-homeassistant-0.6.0.zip` enthält
+Das Archiv `dist/powermesh-energy-homeassistant-0.7.1.zip` enthält
 `custom_components/powermesh_energy` und die Lizenz, keine Testumgebung, Caches
 oder Zugangsdaten. Vorhandene Archive werden nicht überschrieben.
 Den enthaltenen Komponentenordner in das Konfigurationsverzeichnis von
