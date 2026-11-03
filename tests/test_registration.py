@@ -278,7 +278,7 @@ async def test_registration_success_creates_entry_once_without_credentials(hass,
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {CONF_API_KEY: API_KEY, CONF_SETUP_EXPIRES_AT: expires}
     assert result["options"][CONF_ENTITIES] == ["sensor.grid_import"]
-    assert result["options"][CONF_SMOOTHING] == {"sensor.grid_import": "mean_1min"}
+    assert result["options"][CONF_SMOOTHING] == {"sensor.grid_import": "none"}
     assert result["description"] == "account_setup_required"
     assert result["description_placeholders"]["warning"] == WARNING
     assert result["description_placeholders"]["deadline"] != "?"

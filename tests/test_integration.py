@@ -90,7 +90,7 @@ async def test_config_flow_and_smoothing(hass):
             result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
         assert result["type"] is FlowResultType.CREATE_ENTRY
         assert result["data"] == CONNECTION
-        assert result["options"][CONF_SMOOTHING] == {"sensor.grid_import": "mean_1min"}
+        assert result["options"][CONF_SMOOTHING] == {"sensor.grid_import": "none"}
 
 
 async def test_config_flow_allows_numeric_temperature_sensor(hass):
