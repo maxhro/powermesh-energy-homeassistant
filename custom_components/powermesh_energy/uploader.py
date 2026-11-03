@@ -496,10 +496,17 @@ class PowermeshUploader:
         smoother = self._smoothers.get(entity_id)
         if reading is None or smoother is None or self._paused:
             return
+        is_energy = (
+            isinstance(safe_attributes.get("device_class"), str)
+            and safe_attributes["device_class"].casefold() == "energy"
+        )
         if self._buffer_owner is None or self.buffer_limit is None:
             self._enqueue([reading])
             return
-        self._enqueue(smoother.add(reading, when))
+        if is_energy:
+            self._enqueue([reading])
+        else:
+            self._enqueue(smoother.add(reading, when))
 
     @callback
     def _enqueue(self, readings: list[dict[str, Any]]) -> None:
