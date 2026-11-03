@@ -209,7 +209,11 @@ def _smoothing_schema(entities: list[str], choices: Mapping[str, Any] | None, ha
 
 
 def _smoothing_choices(entities: list[str], user_input: Mapping[str, Any], hass: HomeAssistant | None = None) -> dict[str, str]:
-    """Extract smoothing choices, forcing 'none' for energy sensors."""
+    """Extract smoothing choices, forcing 'none' for energy sensors.
+    
+    When reconfiguring, checks if existing smoothing was incorrectly applied
+    to energy sensors and corrects it to 'none'.
+    """
     choices_dict = {}
     for entity in entities:
         is_energy = False
@@ -219,6 +223,7 @@ def _smoothing_choices(entities: list[str], user_input: Mapping[str, Any], hass:
                 is_energy = True
         
         if is_energy:
+            # Energy sensors must never be smoothed; force 'none' regardless of prior config
             choices_dict[entity] = "none"
         else:
             choices_dict[entity] = option_for(user_input, entity)
