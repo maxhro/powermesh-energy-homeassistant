@@ -178,7 +178,13 @@ def _entity_schema(default_entities: list[str], default_interval: str = DEFAULT_
     )
 
 
-def _smoothing_schema(entities: list[str], choices: Mapping[str, Any] | None) -> vol.Schema:
+def _smoothing_schema(entities: list[str], choices: Mapping[str, Any] | None, hass: HomeAssistant | None = None) -> vol.Schema:
+    """Build smoothing schema, forcing 'none' for energy sensors (device_class: energy).
+    
+    Energy sensors (counter reads) must never be smoothed to prevent data corruption.
+    The API validates and rejects energy+smoothing combinations; this UI layer
+    prevents misconfiguration at source.
+    """
     selector = SelectSelector(
         SelectSelectorConfig(
             options=list(SMOOTHING_OPTIONS),
@@ -186,11 +192,38 @@ def _smoothing_schema(entities: list[str], choices: Mapping[str, Any] | None) ->
             translation_key="smoothing",
         )
     )
-    return vol.Schema({vol.Required(entity, default=option_for(choices, entity)): selector for entity in entities})
+    schema_dict = {}
+    for entity in entities:
+        is_energy = False
+        if hass is not None:
+            state = hass.states.get(entity)
+            if state is not None and state.attributes.get("device_class") == "energy":
+                is_energy = True
+        
+        if is_energy:
+            schema_dict[vol.Required(entity, default="none")] = selector
+        else:
+            schema_dict[vol.Required(entity, default=option_for(choices, entity))] = selector
+    
+    return vol.Schema(schema_dict)
 
 
-def _smoothing_choices(entities: list[str], user_input: Mapping[str, Any]) -> dict[str, str]:
-    return {entity: option_for(user_input, entity) for entity in entities}
+def _smoothing_choices(entities: list[str], user_input: Mapping[str, Any], hass: HomeAssistant | None = None) -> dict[str, str]:
+    """Extract smoothing choices, forcing 'none' for energy sensors."""
+    choices_dict = {}
+    for entity in entities:
+        is_energy = False
+        if hass is not None:
+            state = hass.states.get(entity)
+            if state is not None and state.attributes.get("device_class") == "energy":
+                is_energy = True
+        
+        if is_energy:
+            choices_dict[entity] = "none"
+        else:
+            choices_dict[entity] = option_for(user_input, entity)
+    
+    return choices_dict
 
 
 def _describe(suggestion: list[str], skipped: dict[str, str]) -> dict[str, str]:
@@ -366,15 +399,15 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
         """Choose the smoothing per entity (default: 1 min mean)."""
         entities = self._options[CONF_ENTITIES]
         if user_input is not None and self._registering:
-            self._options = self._options | {CONF_SMOOTHING: _smoothing_choices(entities, user_input)}
+            self._options = self._options | {CONF_SMOOTHING: _smoothing_choices(entities, user_input, self.hass)}
             return await self.async_step_register_account()
         if user_input is not None:
             return self.async_create_entry(
                 title="Powermesh Energie",
                 data=self._connection,
-                options=self._options | {CONF_SMOOTHING: _smoothing_choices(entities, user_input)},
+                options=self._options | {CONF_SMOOTHING: _smoothing_choices(entities, user_input, self.hass)},
             )
-        return self.async_show_form(step_id="smoothing", data_schema=_smoothing_schema(entities, None))
+        return self.async_show_form(step_id="smoothing", data_schema=_smoothing_schema(entities, None, self.hass))
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         """The stored key was rejected."""
@@ -453,9 +486,9 @@ class PowermeshOptionsFlow(OptionsFlow):
         """Choose the smoothing per entity; new entities start with the default."""
         entities = self._options[CONF_ENTITIES]
         if user_input is not None:
-            return self.async_create_entry(data=self._options | {CONF_SMOOTHING: _smoothing_choices(entities, user_input)})
+            return self.async_create_entry(data=self._options | {CONF_SMOOTHING: _smoothing_choices(entities, user_input, self.hass)})
         current = self.config_entry.options.get(CONF_SMOOTHING)
         return self.async_show_form(
             step_id="smoothing",
-            data_schema=_smoothing_schema(entities, current if isinstance(current, dict) else None),
+            data_schema=_smoothing_schema(entities, current if isinstance(current, dict) else None, self.hass),
         )
