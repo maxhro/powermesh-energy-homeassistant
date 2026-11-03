@@ -93,6 +93,40 @@ async def test_config_flow_and_smoothing(hass):
         assert result["options"][CONF_SMOOTHING] == {"sensor.grid_import": "none"}
 
 
+async def test_options_flow_corrects_existing_smoothing_for_energy_sensors(hass):
+    hass.states.async_set("sensor.grid_import", "10", ENERGY)
+    hass.states.async_set(
+        "sensor.power_now",
+        "450",
+        {"device_class": "power", "unit_of_measurement": "W", "state_class": "measurement"},
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=CONNECTION,
+        options={
+            CONF_ENTITIES: ["sensor.grid_import", "sensor.power_now"],
+            CONF_SMOOTHING: {"sensor.grid_import": "mean_5min", "sensor.power_now": "throttle_1min"},
+        },
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["step_id"] == "init"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_ENTITIES: ["sensor.grid_import", "sensor.power_now"]},
+    )
+    assert result["step_id"] == "smoothing"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"sensor.grid_import": "none", "sensor.power_now": "throttle_1min"},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_SMOOTHING] == {
+        "sensor.grid_import": "none",
+        "sensor.power_now": "throttle_1min",
+    }
+
+
 async def test_config_flow_allows_numeric_temperature_sensor(hass):
     hass.states.async_set(
         "sensor.room_temperature",

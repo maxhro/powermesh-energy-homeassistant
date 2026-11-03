@@ -178,6 +178,27 @@ def _entity_schema(default_entities: list[str], default_interval: str = DEFAULT_
     )
 
 
+def _is_energy_entity(hass: HomeAssistant | None, entity_id: str) -> bool:
+    """Return True if the entity is an energy counter (device_class: energy)."""
+    if hass is None:
+        return False
+    state = hass.states.get(entity_id)
+    if state is not None and isinstance(state.attributes.get("device_class"), str):
+        if state.attributes["device_class"].casefold() == "energy":
+            return True
+    try:
+        from homeassistant.helpers import entity_registry as er
+
+        entry = er.async_get(hass).async_get(entity_id)
+        if entry is not None:
+            for attr in (entry.device_class, entry.original_device_class):
+                if isinstance(attr, str) and attr.casefold() == "energy":
+                    return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
 def _smoothing_schema(entities: list[str], choices: Mapping[str, Any] | None, hass: HomeAssistant | None = None) -> vol.Schema:
     """Build smoothing schema, forcing 'none' for energy sensors (device_class: energy).
     
@@ -192,16 +213,17 @@ def _smoothing_schema(entities: list[str], choices: Mapping[str, Any] | None, ha
             translation_key="smoothing",
         )
     )
+    none_selector = SelectSelector(
+        SelectSelectorConfig(
+            options=["none"],
+            mode=SelectSelectorMode.DROPDOWN,
+            translation_key="smoothing",
+        )
+    )
     schema_dict = {}
     for entity in entities:
-        is_energy = False
-        if hass is not None:
-            state = hass.states.get(entity)
-            if state is not None and state.attributes.get("device_class") == "energy":
-                is_energy = True
-        
-        if is_energy:
-            schema_dict[vol.Required(entity, default="none")] = selector
+        if _is_energy_entity(hass, entity):
+            schema_dict[vol.Required(entity, default="none")] = none_selector
         else:
             schema_dict[vol.Required(entity, default=option_for(choices, entity))] = selector
     
@@ -216,13 +238,7 @@ def _smoothing_choices(entities: list[str], user_input: Mapping[str, Any], hass:
     """
     choices_dict = {}
     for entity in entities:
-        is_energy = False
-        if hass is not None:
-            state = hass.states.get(entity)
-            if state is not None and state.attributes.get("device_class") == "energy":
-                is_energy = True
-        
-        if is_energy:
+        if _is_energy_entity(hass, entity):
             # Energy sensors must never be smoothed; force 'none' regardless of prior config
             choices_dict[entity] = "none"
         else:
