@@ -36,7 +36,7 @@
       },
       "smoothing": {
         "title": "Smoothing per entity",
-        "description": "Choose per entity how values are smoothed before sending, similar to the Home Assistant filter helper. \"Mean\" sends the time-weighted average of each window, \"At most one value\" sends the first value of each window and drops the rest. Fewer values are transferred with longer windows. Default: mean over 1 minute."
+        "description": "Choose per entity how values are smoothed before sending, similar to the Home Assistant filter helper. \"Mean\" sends the time-weighted average of each window, \"At most one value\" sends the first value of each window and drops the rest. Fewer values are transferred with longer windows. Default: mean over 1 minute.\n\n**Note:** Energy meters (device_class: energy) are always sent without smoothing; other settings are ignored."
       },
       "register": {
         "title": "New account: information and consent",

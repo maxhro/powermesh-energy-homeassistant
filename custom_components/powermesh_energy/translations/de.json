@@ -36,7 +36,7 @@
       },
       "smoothing": {
         "title": "Glättung je Entität",
-        "description": "Lege je Entität fest, wie Werte vor dem Senden geglättet werden – ähnlich dem Filter-Helfer von Home Assistant. „Mittelwert“ sendet den zeitgewichteten Durchschnitt je Zeitfenster, „Höchstens ein Wert“ sendet den ersten Wert je Fenster und verwirft die übrigen. Längere Fenster übertragen weniger Werte. Standard: Mittelwert über 1 Minute."
+        "description": "Lege je Entität fest, wie Werte vor dem Senden geglättet werden – ähnlich dem Filter-Helfer von Home Assistant. „Mittelwert" sendet den zeitgewichteten Durchschnitt je Zeitfenster, „Höchstens ein Wert" sendet den ersten Wert je Fenster und verwirft die übrigen. Längere Fenster übertragen weniger Werte. Standard: Mittelwert über 1 Minute.\n\n**Hinweis:** Energiezähler (device_class: energy) werden immer ohne Glättung übertragen; andere Einstellungen werden ignoriert."
       },
       "register": {
         "title": "Neues Konto: Hinweise und Einwilligungen",
