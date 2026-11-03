@@ -7,7 +7,7 @@ from typing import Final
 
 DOMAIN: Final = "powermesh_energy"
 # Keep in sync with manifest.json.
-VERSION: Final = "0.6.0"
+VERSION: Final = "0.7.0"
 API_RELEASE: Final = "0.3.0"
 API_MAJOR: Final = 2
 # Per-user buffer limits require service release 0.3.0.
