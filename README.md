@@ -1,6 +1,7 @@
 # Powermesh Energie – Home Assistant Integration (Prototyp)
 
-Verbindet Home Assistant mit [powermesh.de](https://powermesh.de).
+Lokale Energieübersicht für Home Assistant, optional mit
+[powermesh.de](https://powermesh.de) verbunden.
 
 > **Status: Prototyp.** Die Integration und powermesh.de befinden sich in Entwicklung.
 > Sie ist nicht offiziell Teil von Home Assistant oder HACS.
@@ -8,11 +9,21 @@ Verbindet Home Assistant mit [powermesh.de](https://powermesh.de).
 ## Wozu?
 
 Ein Vergleich von Smarthomes und die Ableitung von Verbesserungspotenzial befinden
-sich in Entwicklung und sind nicht implementiert. Derzeit speichert Powermesh
-ausschließlich die von dir freigegebenen Sensorwerte; es gibt keine Auswertung oder
-Anzeige der Messwerte.
+sich in Entwicklung und sind nicht implementiert. Die lokale Dashboard-Karte
+zeigt Solarleistung, Netzbezug, Einspeisung und Akkustand aus ausdrücklich
+gewählten HA-Sensoren. Dafür sind weder Konto noch Datenübertragung nötig.
+Die optionale Cloud-Verbindung speichert ausschließlich freigegebene Sensorwerte;
+das lokale Widget liest keine Messwerte von powermesh.de.
 
 ## Deine Daten
+
+Bei **Lokal ohne Konto nutzen** werden keine Daten an powermesh.de übertragen,
+kein API-Schlüssel erstellt und kein Offline-Puffer angelegt. Die Integration
+speichert nur die ausgewählten Sensorreferenzen in HA. Die Karte liest aktuelle
+HA-Zustände und erzeugt keine eigene Messwertablage. Die vorhandene
+HA-Recorder-Aufbewahrung und Zugriffsrechte bleiben unverändert.
+
+Die folgenden Angaben betreffen ausschließlich die optionale Cloud-Verbindung.
 
 Übertragen werden Sensor-Kennung, Zeitpunkt, Zahlenwert und Einheit. Zusätzlich
 können Home-Assistant-Metadaten wie Anzeigename, Geräte- und Zustandsklasse, Bereich,
@@ -25,10 +36,17 @@ weitergegeben. Du kannst deine Einwilligung jederzeit widerrufen; dann werden al
 API-Schlüssel gesperrt und alle gespeicherten Messwerte einschließlich Metadaten
 gelöscht.
 
-Bei einer Registrierung aus Home Assistant werden E-Mail-Adresse, Passwort und
-Einladungscode nur für das Anlegen des Kontos an powermesh.de übermittelt und
-nicht in Home Assistant gespeichert. Gespeichert wird lokal der persönliche
-API-Schlüssel, wie bei der Einrichtung mit einem vorhandenen Schlüssel.
+Neue Website-Verbindungen speichern in der Cloud nur den aktuellen Stand je
+ausgewähltem Sensor; daraus entsteht keine Verlaufshistorie und keine
+Tages-/Monatsbilanz. Deine Home-Assistant-Recorder-Daten und bestehende
+Rohwert-Verläufe älterer Einträge bleiben unverändert.
+
+Bei der neuen Website-Einrichtung erstellt Home Assistant ein zufälliges,
+lokal gespeichertes Verknüpfungsgeheimnis und zeigt einen kurzlebigen Code.
+E-Mail-Adresse, Passwort, E-Mail-Bestätigung und Authenticator werden nur auf
+powermesh.de eingerichtet. Der API-Schlüssel kommt erst nach bestätigter
+E-Mail-Adresse, MFA und Speicherzustimmung zurück nach Home Assistant. Das
+Verknüpfungsgeheimnis wird nach erfolgreicher Schlüsselübernahme entfernt.
 
 ## Installation über HACS
 
@@ -43,16 +61,62 @@ Der Button öffnet das Repository direkt in deinem HACS. Alternativ von Hand:
 4. **Einstellungen → Geräte & Dienste → Integration hinzufügen → Powermesh Energie**
 
 Voraussetzung: Home Assistant 2026.10.4
-(getesteter Stand) oder neuer und entweder ein Konto auf powermesh.de mit
-persönlichem API-Schlüssel oder ein Einladungscode für ein neues Konto.
+(getesteter Stand) oder neuer. Für die lokale Übersicht genügen passende
+Sensoren. Nur die optionale Cloud-Verbindung braucht einen persönlichen
+API-Schlüssel oder einen neuen HA-Website-Code. Ältere Betreiber-Einladungen
+bleiben als separater Kompatibilitätsweg verfügbar.
 Das Integrations-Icon zeigt Home Assistant ab Version 2026.3 an.
 
 ## Einrichtung
 
-Beim Hinzufügen der Integration wählst du einen von zwei Wegen. Andere
+Beim Hinzufügen der Integration wählst du den lokalen Einstieg oder einen der
+optionalen Cloud-Wege. Andere
 Home-Assistant-Integrationen und lokale Broker-Einstellungen werden davon nicht
 geändert. Für beide Wege gelten die
 [Nutzungsbedingungen von powermesh.de](https://powermesh.de/?r=terms).
+
+### Lokal ohne Konto nutzen
+
+1. **Lokal ohne Konto nutzen** wählen.
+2. Mindestens eine Quelle auswählen: Solarleistung, Netzbezug oder Einspeisung
+   in W/kW, optional Akkustand in Prozent. Die Auswahl ist nach Einheiten
+   gefiltert. Netzbezug und Einspeisung brauchen getrennte einseitige Quellen;
+   ein vorzeichenbehafteter gemeinsamer Netzsensor wird nicht automatisch geteilt.
+3. Speichern. Quellen lassen sich unter **Konfigurieren** ändern oder entfernen.
+
+Es gibt in diesem Weg keine Glättungs-, Intervall- oder Kontoeinrichtung.
+Ein bestehender Cloud-Eintrag bleibt eigenständig; lokales Einrichten oder
+Entfernen verändert seine Berechtigungen, Messwerte und Puffer nicht.
+
+### Dashboard-Widget
+
+Die mitgelieferte Karte wird nach Einrichtung der Integration lokal in HA
+bereitgestellt. Einmalig unter **Einstellungen → Dashboards → Ressourcen**
+(bei Bedarf erweiterten Modus aktivieren) diese Ressource hinzufügen:
+
+- URL: `/powermesh-energy/powermesh-energy-card.js`
+- Typ: **JavaScript-Modul**
+
+Das Dashboard neu laden, **Bearbeiten → Karte hinzufügen → Powermesh Energie**
+wählen. Der grafische Editor kann die lokale **Energieübersicht** übernehmen
+oder einzelne Quellen wählen. Die Karte funktioniert auch neben einer
+bestehenden Cloud-Einrichtung mit direkt ausgewählten HA-Sensoren.
+
+Alternativ als manuelle Karte:
+
+```yaml
+type: custom:powermesh-energy-card
+entity: sensor.powermesh_energie_energieubersicht
+```
+
+Den tatsächlichen Namen der lokalen Energieübersicht aus HA verwenden.
+Die Karte zeigt fehlende Quellen, ungeeignete Einheiten, negative einseitige
+Leistung und ungültigen Akkustand ausdrücklich an. Nach standardmäßig 15 Minuten
+ohne gemeldete Aktualisierung wird der letzte bekannte Wert als **Veraltet**
+markiert; der Grenzwert lässt sich im Karteneditor ändern. Das Datenalter ist
+keine Messgeräte-Verfügbarkeitsgarantie. Anklicken öffnet die HA-Sensoransicht.
+Keine automatische Verbrauchsbilanz, Tagesaggregation, Sparprognose oder Steuerung.
+Native Handy-Widgets sind nicht Teil dieser Dashboard-Karte.
 
 ### Vorhandenen API-Schlüssel verwenden
 
@@ -62,51 +126,36 @@ geändert. Für beide Wege gelten die
    Schlüssel eintragen.
 3. Sensoren und Glättung wie unten beschrieben auswählen.
 
-### Neues Konto mit Einladungscode anlegen
+### Neues Konto über Website verbinden
 
-Für ein neues Konto direkt aus Home Assistant benötigst du einen Einladungscode,
-den dir der Betreiber von powermesh.de persönlich zur Verfügung stellt. Der Code
-ist 24 Stunden gültig und erlaubt genau eine Registrierung, auch wenn das Konto
-später gelöscht oder Home Assistant neu eingerichtet wird. Er ist eine
-Berechtigung zur Registrierung, kein Nachweis für eine bestimmte Installation.
-Für eine E-Mail-Adresse mit bestehendem Konto ist dieser Weg nicht möglich;
-verwende dann einen API-Schlüssel.
+1. **Neues Konto über Website verbinden** wählen und die für die Übertragung
+   vorgesehenen Sensoren sowie Glättung auswählen.
+2. Home Assistant erzeugt einen einmaligen Code. Öffne den angezeigten Link
+   innerhalb von 30 Minuten und gib den Code auf powermesh.de ein.
+3. Lege dort E-Mail-Adresse und Passwort fest. Lies und bestätige Datenschutzhinweise
+   und Nutzungsbedingungen sowie separat die Speicherung der ausgewählten
+   Messwerte/Metadaten. Eine bestehende E-Mail-Adresse wird nicht neu verknüpft.
+4. Bestätige den E-Mail-Link und richte auf der Website den Authenticator ein.
+   Standardfrist: **7 Tage** ab Kontoanlage. Nach Fristablauf wird das
+   unvollständige Konto gesperrt und beim nächsten Website-Bereinigungslauf
+   samt zugehörigen Daten gelöscht.
+5. Kehre zur wartenden Home-Assistant-Einrichtung zurück und bestätige den
+   Abschluss. Erst nach serverseitiger Prüfung von E-Mail, MFA und Speicherzustimmung
+   erhält HA den persönlichen API-Schlüssel. Bleibt die Antwort aus, kann die
+   Schlüsselabholung sicher wiederholt werden; es wird kein zweiter Schlüssel erstellt.
 
-1. **Neues Konto mit Einladungscode anlegen** wählen und die Datenschutzhinweise,
-   die Nutzungsbedingungen sowie die Einwilligung zur Speicherung der Messwerte
-   jeweils einzeln bestätigen.
-2. Sensoren und Glättung auswählen (siehe unten). Erst danach wird registriert.
-3. E-Mail-Adresse, Passwort und Einladungscode eingeben. Die Angaben werden einmal
-   verschlüsselt an powermesh.de gesendet. Home Assistant speichert anschließend nur
-   den ausgegebenen persönlichen API-Schlüssel – nicht E-Mail-Adresse, Passwort
-   oder Einladungscode. Die Registrierung wird nie automatisch wiederholt.
-4. Die Integration startet sofort. Gleichzeitig erscheinen ein Hinweis und eine
-   Reparaturmeldung mit der Frist für die Kontoeinrichtung.
-5. Innerhalb von **168 Stunden (7 Tagen)** nach der Registrierung auf powermesh.de
-   mit E-Mail-Adresse und Passwort anmelden (beim ersten Besuch ohne
-   Authenticator-Code), den Bestätigungslink per E-Mail anfordern, ihn bestätigen
-   und danach den Authenticator einrichten. Die Reparaturmeldung verschwindet erst,
-   wenn powermesh.de den Abschluss bestätigt.
+Der Code ist eine einmalige Website-Berechtigung, kein dauerhafter API-Schlüssel.
+HA speichert vorübergehend nur das zufällige Installationsgeheimnis in seiner
+geschützten `.storage`-Ablage. Bestehende Konten werden nicht übernommen; dafür
+weiterhin einen vorhandenen API-Schlüssel verwenden.
 
-Wird die Einrichtung nicht rechtzeitig abgeschlossen, sperrt powermesh.de das
-Konto zur Frist. Die automatische Löschung erfolgt erst durch einen eingerichteten
-Bereinigungslauf; ein solcher Lauf ist für den Produktivbetrieb derzeit nicht
-eingerichtet. Eine automatische Kontolöschung ist daher nicht garantiert.
-Home Assistant zeigt die Sperre als Fehlermeldung an und legt weder ein neues
-Konto noch einen neuen Schlüssel automatisch an. Ausstehende Messwerte bleiben
-lokal, bis du den Eintrag entfernst.
+### Betreiber-Einladung (Kompatibilitätsweg)
 
-Liefert powermesh.de nach der Registrierung zwar einen API-Schlüssel, aber keinen
-gültigen Kontostatus, wird der Schlüssel trotzdem gespeichert und ein
-Protokollfehler mit unbekannter Frist gemeldet. Schließe die Einrichtung dann so
-bald wie möglich ab; die Meldung verschwindet, sobald powermesh.de den
-Kontostatus meldet.
-
-Bleibt das Ergebnis der Registrierung unklar (zum Beispiel bei einem
-Verbindungsabbruch), wurde das Konto möglicherweise trotzdem angelegt und der
-Einladungscode verbraucht. Melde dich dann auf powermesh.de an; gelingt das,
-schließe die Einrichtung ab, erstelle einen API-Schlüssel und verwende ihn.
-Andernfalls fordere beim Betreiber einen neuen Code an.
+Dieser getrennte Rückfallweg ist für Installationen, deren Betreiber die
+automatische HA-Code-Ausgabe deaktiviert hat oder einen älteren vom Betreiber
+ausgestellten Code bereitstellt. Der bestehende Ablauf erfragt E-Mail, Passwort
+und Einladungscode in HA und legt danach ein vorläufiges Konto an. Nutze ihn nur,
+wenn powermesh.de bzw. der Betreiber diesen Weg ausdrücklich vorgibt.
 
 ### Sensoren und Glättung
 
@@ -144,10 +193,12 @@ installiere die angebotene neue Version und starte Home Assistant danach neu.
 
 ## Versionen
 
-Diese Integration ist ein Entwicklungsstand in Version **0.7.1** und benötigt
-einen entsprechend aktualisierten Dienst. Sie wird
+Diese Integration ist ein Entwicklungsstand in Version **0.8.0** und benötigt
+für die neue Website-Verknüpfung API release **0.4.0**. Die optionale
+Cloud-Verbindung benötigt einen entsprechend aktualisierten Dienst. Sie wird
 unabhängig von der Website und dem Dienst versioniert. Vergleiche und Auswertungen
-sind nicht implementiert. Halte die Integration über HACS aktuell.
+sind nicht implementiert; die lokale Karte zeigt vorhandene HA-Zustände.
+Halte die Integration über HACS aktuell.
 
 ## Lokale Tests
 
@@ -160,7 +211,7 @@ pwsh -NoProfile -File ./build-package.ps1 -DryRun
 pwsh -NoProfile -File ./build-package.ps1 -BuildPackage
 ```
 
-Das Archiv `dist/powermesh-energy-homeassistant-0.7.1.zip` enthält
+Das Archiv `dist/powermesh-energy-homeassistant-0.8.0.zip` enthält
 `custom_components/powermesh_energy` und die Lizenz, keine Testumgebung, Caches
 oder Zugangsdaten. Vorhandene Archive werden nicht überschrieben.
 Den enthaltenen Komponentenordner in das Konfigurationsverzeichnis von
@@ -187,11 +238,12 @@ einen persönlichen Zugang voraus.
 
 **English:** Prototype Home Assistant integration for powermesh.de. Smart-home
 comparison and improvement analysis are in development and not implemented. The
-service currently stores only selected sensor readings. Readings and optional
-Home Assistant metadata are pseudonymously associated with the account; see the
-German privacy description above. Setup works with an existing personal API key
-or, with a single-use operator invitation, by creating a new account whose email
-confirmation and authenticator setup must be completed on powermesh.de within
-168 hours; otherwise the account and all its data are deleted. The powermesh.de
-terms of use apply. Code: MIT. The service is not covered by this
-license.
+service stores only selected sensor readings after explicit consent. The local
+dashboard card works without an account or upload. Cloud setup supports an
+existing personal API key or a one-use HA pairing code: email, password, email
+verification, storage consent and authenticator setup are completed on the
+website; HA receives the key only after setup succeeds. The configured deadline
+defaults to seven days; incomplete accounts are blocked immediately and removed
+by the website maintenance job. A legacy operator-invitation flow remains
+available. The powermesh.de terms of use apply. Code: MIT. The service is not
+covered by this license.

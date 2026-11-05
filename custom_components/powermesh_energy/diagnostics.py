@@ -16,6 +16,8 @@ from .energy_dashboard import async_suggestion
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: PowermeshConfigEntry) -> dict[str, Any]:
     """Return configuration and upload state without secrets or reading values."""
     uploader = entry.runtime_data
+    if uploader is None:
+        return {"mode": "local", "integration_version": VERSION}
     suggestion, skipped = await async_suggestion(hass)
     return {
         "entry": async_redact_data(dict(entry.data), {CONF_API_KEY}),

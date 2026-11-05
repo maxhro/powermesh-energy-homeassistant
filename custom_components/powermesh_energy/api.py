@@ -126,6 +126,17 @@ class Registration:
         return f"Registration(key_id={self.api_key.split('_', 2)[1]!r}, account={self.account!r})"
 
 
+@dataclass(frozen=True, slots=True)
+class Pairing:
+    """One-time website code for a locally retained installation secret."""
+
+    code: str
+    expires_at: int
+
+    def __repr__(self) -> str:
+        return f"Pairing(expires_at={self.expires_at})"
+
+
 def sanitize_warning(value: Any) -> str | None:
     """Return a bounded display text; drop anything resembling an address or key."""
     if not isinstance(value, str):
@@ -208,14 +219,19 @@ class PowermeshClient:
 
     async def upload(self, readings: list[dict[str, Any]]) -> UploadResult:
         """Upload one batch and require an exact server acknowledgement."""
+        return await self._write(readings, "/api/v2/readings")
+
+    async def snapshot(self, readings: list[dict[str, Any]]) -> UploadResult:
+        """Replace the current snapshot for each selected sensor."""
+        return await self._write(readings, "/api/v2/snapshot")
+
+    async def _write(self, readings: list[dict[str, Any]], path: str) -> UploadResult:
         if (
             not 1 <= len(readings) <= MAX_READINGS_PER_REQUEST
             or not all(is_api_reading(reading) for reading in readings)
         ):
             raise PowermeshRejectedError("invalid_readings_count", 422, None)
-        body, headers = await self._request(
-            "POST", "/api/v2/readings", {"readings": readings}
-        )
+        body, headers = await self._request("POST", path, {"readings": readings})
         accepted, duplicates = body.get("accepted"), body.get("duplicates")
         if (
             type(accepted) is not int
@@ -373,6 +389,88 @@ async def register_account(
     if status in {404, 405}:
         raise PowermeshRegistrationError("registration_unavailable", status)
     raise PowermeshRegistrationError("registration_rejected", status)
+
+
+async def _pairing_request(
+    session: aiohttp.ClientSession, action: str, installation_secret: str
+) -> dict[str, Any]:
+    if not isinstance(installation_secret, str) or re.fullmatch(r"[a-f0-9]{64}", installation_secret) is None:
+        raise PowermeshRegistrationError("registration_incomplete")
+    try:
+        encoded = encode_request({"action": action, "installation_secret": installation_secret})
+    except PowermeshRejectedError:
+        raise PowermeshRegistrationError("registration_incomplete") from None
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Powermesh-Client": CLIENT_ID,
+        "User-Agent": f"powermesh-energy-{CLIENT_ID}",
+    }
+    try:
+        async with session.request(
+            "POST", DEFAULT_URL + REGISTRATION_PATH, data=encoded, headers=headers,
+            timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS), allow_redirects=False,
+        ) as response:
+            status = response.status
+            response_headers = response.headers
+            raw = await response.content.read(MAX_BODY_BYTES + 1)
+    except aiohttp.ClientConnectorError:
+        raise PowermeshRegistrationError("cannot_connect") from None
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        raise PowermeshRegistrationError("cannot_connect", uncertain=True) from None
+    try:
+        body = json.loads(raw) if len(raw) <= MAX_BODY_BYTES and raw else None
+    except (ValueError, UnicodeError):
+        body = None
+    if len(raw) > MAX_BODY_BYTES or not isinstance(body, dict):
+        raise PowermeshRegistrationError("registration_uncertain", status, uncertain=True)
+    version = parse_version(response_headers.get("X-Powermesh-Api-Version"))
+    required = parse_version(MIN_API_RELEASE)
+    release = parse_version(body.get("api_release"))
+    if version is None or required is None or version < required or (200 <= status < 300 and release != version):
+        raise PowermeshRegistrationError("update_required", status)
+    if 200 <= status < 300:
+        if body.get("status") in {"ok", "pending"}:
+            return body
+        if body.get("status") == "expired":
+            raise PowermeshRegistrationError("pairing_expired", status)
+        raise PowermeshRegistrationError("registration_uncertain", status, uncertain=True)
+    error = body.get("error")
+    code = error.get("code") if isinstance(error, dict) else None
+    if status == 403 and code == "registration_unavailable":
+        raise PowermeshRegistrationError("registration_unavailable", status)
+    if status == 409 and code == "pairing_used":
+        raise PowermeshRegistrationError("pairing_used", status)
+    if status == 429:
+        raise PowermeshRegistrationError("registration_rate_limited", status)
+    if status == 426:
+        raise PowermeshRegistrationError("update_required", status)
+    if status >= 500:
+        raise PowermeshRegistrationError("registration_uncertain", status, uncertain=True)
+    raise PowermeshRegistrationError("registration_rejected", status)
+
+
+async def start_pairing(session: aiohttp.ClientSession, installation_secret: str) -> Pairing:
+    """Request or safely repeat a pairing code for an HA-local secret."""
+    body = await _pairing_request(session, "start", installation_secret)
+    code, expires = body.get("pairing_code"), body.get("expires_at")
+    if not isinstance(code, str) or re.fullmatch(r"[A-Za-z0-9_-]{22}", code) is None or type(expires) is not int:
+        raise PowermeshRegistrationError("registration_uncertain", uncertain=True)
+    return Pairing(code, expires)
+
+
+async def claim_pairing(
+    session: aiohttp.ClientSession, installation_secret: str
+) -> Registration | None:
+    """Return the issued API key only after website email and MFA setup."""
+    body = await _pairing_request(session, "claim", installation_secret)
+    if body.get("status") == "pending":
+        return None
+    api_key = body.get("api_key")
+    account = parse_account(body)
+    if not isinstance(api_key, str) or API_KEY_PATTERN.fullmatch(api_key) is None or account != AccountState(False):
+        raise PowermeshRegistrationError("registration_uncertain", uncertain=True)
+    return Registration(api_key, account)
 
 
 def parse_buffer_limit(limits: Any) -> int:

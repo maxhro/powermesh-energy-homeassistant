@@ -2,12 +2,29 @@
   "config": {
     "step": {
       "user": {
-        "title": "Mit powermesh.de verbinden",
-        "description": "Wähle, ob du einen vorhandenen persönlichen API-Schlüssel verwendest oder mit einem Einladungscode ein neues powermesh.de-Konto anlegst.",
+        "title": "Powermesh Energie",
+        "description": "Nutze die Energieübersicht lokal ohne Konto oder verbinde optional powermesh.de zur Übertragung ausgewählter Messwerte.",
         "menu_options": {
+          "local": "Lokal ohne Konto nutzen",
           "api_key": "Vorhandenen API-Schlüssel verwenden",
-          "register": "Neues Konto mit Einladungscode anlegen"
+          "register_website": "Neues Konto über Website verbinden",
+          "register": "Betreiber-Einladung verwenden"
         }
+      },
+      "register_website": {
+        "title": "Neues Konto verbinden",
+        "description": "Wähle zuerst die Sensoren. Home Assistant zeigt danach einen einmaligen Code. E-Mail-Adresse, Passwort, E-Mail-Bestätigung und Authenticator richtest du ausschließlich auf powermesh.de ein. Messwertspeicherung beginnt erst nach deiner ausdrücklichen Zustimmung dort und abgeschlossener E-Mail-/MFA-Einrichtung. {url}",
+        "data": {"continue": "Sensoren auswählen und Website-Code anfordern"}
+      },
+      "pairing": {
+        "title": "Konto auf powermesh.de einrichten",
+        "description": "Öffne {url}, gib den Einrichtungscode ein und richte E-Mail-Adresse, Passwort, E-Mail-Bestätigung und Authenticator ein. Der Code läuft um Unix-Zeit {expires} ab und kann nur einmal verwendet werden. Danach hier „Abgeschlossen“ wählen. Home Assistant fragt keine Kontozugangsdaten oder MFA-Geheimnisse ab.",
+        "data": {"complete": "E-Mail und Authenticator auf der Website abgeschlossen", "restart": "Neuen Verknüpfungscode anfordern und dieses Konto nicht verbinden"}
+      },
+      "local": {
+        "title": "Lokale Energieübersicht",
+        "description": "Wähle mindestens eine Quelle. Solar- und Netzleistung: W/kW. Akkustand: %. Netzbezug und Einspeisung benötigen getrennte, einseitige Quellen. Es werden keine Messwerte übertragen.",
+        "data": {"solar_power": "Solarleistung", "grid_import_power": "Netzbezug", "grid_export_power": "Einspeisung", "battery_soc": "Akkustand"}
       },
       "api_key": {
         "title": "Mit powermesh.de verbinden",
@@ -66,6 +83,9 @@
       }
     },
     "error": {
+      "invalid_source": "Bitte eine Quelle mit passender Einheit auswählen.",
+      "duplicate_source": "Bitte unterschiedliche Quellen für unterschiedliche Rollen wählen.",
+      "snapshot_limit": "Für die neue Cloud-Snapshot-Einrichtung kannst du höchstens 200 Sensoren auswählen.",
       "invalid_auth": "Der API-Schlüssel wurde abgelehnt. Prüfe ihn in deinem powermesh.de-Konto.",
       "consent_required": "Auf powermesh.de fehlt die Einwilligung zur Übertragung oder der Schlüssel hat keine Schreibberechtigung.",
       "rate_limited": "Zu viele Anfragen. Bitte in einer Minute erneut versuchen.",
@@ -86,7 +106,11 @@
       "account_exists": "Für diese E-Mail-Adresse besteht bereits ein Konto. Erstelle auf powermesh.de einen API-Schlüssel und wähle „Vorhandenen API-Schlüssel verwenden“.",
       "registration_rate_limited": "Zu viele Registrierungsversuche. Bitte später erneut versuchen.",
       "registration_rejected": "powermesh.de hat die Registrierung abgelehnt.",
-      "registration_unavailable": "Der Dienst bietet die Registrierung derzeit nicht an."
+      "registration_unavailable": "Die automatische Registrierung ist derzeit nicht freigeschaltet. Verwende eine Betreiber-Einladung oder einen vorhandenen API-Schlüssel.",
+      "pairing_pending": "Die Website-Einrichtung ist noch nicht abgeschlossen. Bestätige deine E-Mail-Adresse und richte den Authenticator ein, danach hier erneut prüfen.",
+      "pairing_expired": "Der Code ist abgelaufen. Ein neuer Code wurde angefordert.",
+      "pairing_used": "Dieser Code wurde bereits verwendet. Schließe die Website-Einrichtung ab oder starte einen neuen HA-Verbindungsablauf.",
+      "registration_uncertain": "Die Antwort war unklar. Du kannst dieselbe Einrichtung sicher erneut prüfen; es wird kein zweites Konto oder zusätzlicher Schlüssel erstellt."
     },
     "abort": {
       "already_configured": "Dieser Server ist bereits eingerichtet.",
@@ -101,6 +125,11 @@
   },
   "options": {
     "step": {
+      "local": {
+        "title": "Lokale Energieübersicht",
+        "description": "Gewählte Quellen ändern oder entfernen. Mindestens eine Quelle ist nötig. Es werden keine Messwerte übertragen.",
+        "data": {"solar_power": "Solarleistung", "grid_import_power": "Netzbezug", "grid_export_power": "Einspeisung", "battery_soc": "Akkustand"}
+      },
       "init": {
         "title": "Übertragene Entitäten",
         "description": "Vorschlag aus deinem Energie-Dashboard:\n{suggestion}\n\nNicht vorgeschlagen:\n{skipped}\n\n{invalid}",
@@ -120,6 +149,9 @@
       }
     },
     "error": {
+      "invalid_source": "Bitte eine Quelle mit passender Einheit auswählen.",
+      "duplicate_source": "Bitte unterschiedliche Quellen für unterschiedliche Rollen wählen.",
+      "snapshot_limit": "Für die neue Cloud-Snapshot-Einrichtung kannst du höchstens 200 Sensoren auswählen.",
       "no_entities": "Bitte mindestens eine Entität auswählen.",
       "incompatible": "Wähle nur Sensor-Entitäten aus: {invalid}"
     }

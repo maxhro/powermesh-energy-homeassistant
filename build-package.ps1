@@ -11,11 +11,11 @@ if ($DryRun -eq $BuildPackage) { throw 'Specify exactly one of -DryRun or -Build
 $root = $PSScriptRoot
 $component = Join-Path $root 'custom_components/powermesh_energy'
 $manifest = Get-Content -LiteralPath (Join-Path $component 'manifest.json') -Raw | ConvertFrom-Json
-if ($manifest.domain -ne 'powermesh_energy' -or $manifest.version -ne '0.7.1') {
-    throw 'Expected the powermesh_energy 0.7.1 baseline.'
+if ($manifest.domain -ne 'powermesh_energy' -or $manifest.version -ne '0.8.0') {
+    throw 'Expected the powermesh_energy 0.8.0 baseline.'
 }
 $const = Get-Content -LiteralPath (Join-Path $component 'const.py') -Raw
-if ($const -notmatch '(?m)^VERSION:\s*Final\s*=\s*"0\.7\.1"\s*$') { throw 'manifest.json and const.py versions do not agree.' }
+if ($const -notmatch '(?m)^VERSION:\s*Final\s*=\s*"0\.8\.0"\s*$') { throw 'manifest.json and const.py versions do not agree.' }
 $files = [System.Collections.Generic.List[string]]::new()
 foreach ($directory in @((Join-Path $root 'custom_components'), $component)) {
     if ((Get-Item -LiteralPath $directory).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Symbolic links are not allowed in component inputs.' }
@@ -24,7 +24,8 @@ foreach ($file in Get-ChildItem -LiteralPath $component -Recurse -Force) {
     if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Symbolic links are not allowed in component inputs.' }
     if ($file.PSIsContainer) { continue }
     $relative = [IO.Path]::GetRelativePath($root, $file.FullName).Replace('\', '/')
-    if ($relative -match '/__pycache__/' -or $file.Extension -notin @('.py', '.json')) { continue }
+    if ($relative -match '/__pycache__/' -or $file.Extension -notin @('.py', '.json', '.js')) { continue }
+    if ($file.Extension -eq '.js' -and $relative -ne 'custom_components/powermesh_energy/frontend/powermesh-energy-card.js') { throw 'Only the dashboard card JavaScript is allowed.' }
     if ($relative -match '/\.' -or $file.Name -eq 'secrets.json') { throw 'Hidden or secret files are not component inputs.' }
     $files.Add($relative)
 }

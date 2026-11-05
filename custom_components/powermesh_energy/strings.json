@@ -2,12 +2,29 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect powermesh.de",
-        "description": "Choose whether to use an existing personal API key or to create a new powermesh.de account with an invitation code.",
+        "title": "Powermesh Energy",
+        "description": "Use the energy overview locally without an account, or optionally connect to powermesh.de for selected reading uploads.",
         "menu_options": {
+          "local": "Use locally without an account",
           "api_key": "Use existing API key",
-          "register": "Create new account with invitation code"
+          "register_website": "Connect new account through website",
+          "register": "Use operator invitation"
         }
+      },
+      "register_website": {
+        "title": "Connect a new account",
+        "description": "Select sensors first. Home Assistant then shows a one-time code. Set up your email address, password, email confirmation and authenticator only on powermesh.de. Reading storage starts only after your explicit consent there and completed email/MFA setup. {url}",
+        "data": {"continue": "Select sensors and request website code"}
+      },
+      "pairing": {
+        "title": "Set up your powermesh.de account",
+        "description": "Open {url}, enter the setup code, and set up your email address, password, email confirmation and authenticator. The code expires at Unix time {expires} and can only be used once. Then select “Completed” here. Home Assistant does not ask for account credentials or MFA secrets.",
+        "data": {"complete": "Email and authenticator setup completed on the website", "restart": "Request a new pairing code and do not link this account"}
+      },
+      "local": {
+        "title": "Local energy overview",
+        "description": "Select at least one source. Solar and grid power: W/kW. Battery charge: %. Grid import and export need separate one-way sources. No readings are transferred.",
+        "data": {"solar_power": "Solar power", "grid_import_power": "Grid import", "grid_export_power": "Grid export", "battery_soc": "Battery charge"}
       },
       "api_key": {
         "title": "Connect powermesh.de",
@@ -66,6 +83,9 @@
       }
     },
     "error": {
+      "invalid_source": "Select a source with the matching unit.",
+      "duplicate_source": "Use separate sources for separate roles.",
+      "snapshot_limit": "The new cloud snapshot setup supports at most 200 selected sensors.",
       "invalid_auth": "The API key was rejected. Check it in your powermesh.de account.",
       "consent_required": "Consent to the transfer is missing on powermesh.de, or the key lacks the write scope.",
       "rate_limited": "Too many requests. Try again in a minute.",
@@ -86,7 +106,11 @@
       "account_exists": "An account already exists for this email address. Create an API key on powermesh.de and choose \"Use existing API key\".",
       "registration_rate_limited": "Too many registration attempts. Try again later.",
       "registration_rejected": "powermesh.de rejected the registration.",
-      "registration_unavailable": "The service does not currently offer registration."
+      "registration_unavailable": "Automatic registration is currently disabled. Use an operator invitation or an existing API key.",
+      "pairing_pending": "Website setup is not complete yet. Confirm your email and set up the authenticator, then check again here.",
+      "pairing_expired": "The code expired. A new code has been requested.",
+      "pairing_used": "This code has already been used. Finish website setup or restart HA linking.",
+      "registration_uncertain": "The response was unclear. You can safely check the same setup again; no second account or extra key will be created."
     },
     "abort": {
       "already_configured": "This server is already configured.",
@@ -101,6 +125,11 @@
   },
   "options": {
     "step": {
+      "local": {
+        "title": "Local energy overview",
+        "description": "Change or remove selected sources. At least one source is required. No readings are transferred.",
+        "data": {"solar_power": "Solar power", "grid_import_power": "Grid import", "grid_export_power": "Grid export", "battery_soc": "Battery charge"}
+      },
       "init": {
         "title": "Transferred entities",
         "description": "Suggestion from your energy dashboard:\n{suggestion}\n\nNot suggested:\n{skipped}\n\n{invalid}",
@@ -120,6 +149,9 @@
       }
     },
     "error": {
+      "invalid_source": "Select a source with the matching unit.",
+      "duplicate_source": "Use separate sources for separate roles.",
+      "snapshot_limit": "The new cloud snapshot setup supports at most 200 selected sensors.",
       "no_entities": "Select at least one entity.",
       "incompatible": "Select sensor entities only: {invalid}"
     }

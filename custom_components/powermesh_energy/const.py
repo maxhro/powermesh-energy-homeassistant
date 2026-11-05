@@ -7,21 +7,28 @@ from typing import Final
 
 DOMAIN: Final = "powermesh_energy"
 # Keep in sync with manifest.json.
-VERSION: Final = "0.7.1"
-API_RELEASE: Final = "0.3.0"
+VERSION: Final = "0.8.0"
+API_RELEASE: Final = "0.4.0"
 API_MAJOR: Final = 2
-# Per-user buffer limits require service release 0.3.0.
+# Website-issued pairing codes require service release 0.4.0.
 MIN_API_RELEASE: Final = API_RELEASE
 CLIENT_ID: Final = f"homeassistant/{VERSION}"
 DEFAULT_URL: Final = "https://api.powermesh.de"
 CONF_API_KEY: Final = "api_key"
+CONF_STORAGE_MODE: Final = "storage_mode"
+CONF_PAIRING_LINKED: Final = "website_pairing_linked"
+MODE_READINGS: Final = "readings"
+MODE_SNAPSHOT: Final = "snapshot"
 # Registration deadline seed (unix seconds); never credentials, email or invitation.
 CONF_SETUP_EXPIRES_AT: Final = "account_setup_expires_at"
 # Set when registration returned a key without a valid account status.
 CONF_ACCOUNT_STATUS_UNKNOWN: Final = "account_status_unknown"
+PAIRING_CODE_TTL_SECONDS: Final = 1800
+PAIRING_URL: Final = "https://powermesh.de/?r=register&ha=1"
+PAIRING_STORE: Final = f"{DOMAIN}.pending_pairing"
 
 REGISTRATION_PATH: Final = "/api/v2/register"
-REGISTRATION_CONSENT_VERSION: Final = "2026-10-27-ha-registration-v1"
+REGISTRATION_CONSENT_VERSION: Final = "2026-11-05-ha-registration-v2"
 ENERGY_CONSENT_VERSION: Final = "2026-10-26-rest-metadata-0.1.0"
 ACCOUNT_SETUP_HOURS: Final = 168
 PRIVACY_URL: Final = "https://powermesh.de/?r=security"
@@ -31,6 +38,11 @@ MAX_BODY_BYTES: Final = 131072
 
 CONF_ENTITIES: Final = "entities"
 CONF_USE_SUGGESTION: Final = "use_dashboard_suggestion"
+CONF_MODE: Final = "mode"
+MODE_LOCAL: Final = "local"
+CONF_ROLES: Final = "roles"
+LOCAL_ROLES: Final = ("solar_power", "grid_import_power", "grid_export_power", "battery_soc")
+CARD_URL: Final = "/powermesh-energy/powermesh-energy-card.js"
 CONF_UPLOAD_INTERVAL: Final = "upload_interval"
 # Per-entity smoothing option keys, see smoothing.OPTIONS.
 CONF_SMOOTHING: Final = "smoothing"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import re
+import secrets
 from typing import Any
 
 import voluptuous as vol
@@ -11,6 +12,8 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.selector import (
     BooleanSelector,
     EntitySelector,
@@ -34,7 +37,9 @@ from .api import (
     PowermeshRateLimitError,
     PowermeshRegistrationError,
     Registration,
+    claim_pairing,
     register_account,
+    start_pairing,
     validate_connection,
     validate_status,
 )
@@ -42,13 +47,25 @@ from .const import (
     ACCOUNT_SETUP_HOURS,
     CONF_ACCOUNT_STATUS_UNKNOWN,
     CONF_API_KEY,
+    CONF_STORAGE_MODE,
+    CONF_PAIRING_LINKED,
+    MODE_READINGS,
+    MODE_SNAPSHOT,
     CONF_ENTITIES,
     CONF_SETUP_EXPIRES_AT,
     CONF_SMOOTHING,
     CONF_UPLOAD_INTERVAL,
     CONF_USE_SUGGESTION,
     DEFAULT_UPLOAD_INTERVAL,
+    CONF_MODE,
+    MODE_LOCAL,
+    CONF_ROLES,
+    LOCAL_ROLES,
+    MAX_READINGS_PER_REQUEST,
     DOMAIN,
+    PAIRING_STORE,
+    PAIRING_URL,
+    STORAGE_VERSION,
     INTERVAL_OPTIONS,
     PRIVACY_URL,
     TERMS_URL,
@@ -79,6 +96,10 @@ REGISTRATION_ERRORS = frozenset({
     "registration_rate_limited",
     "registration_rejected",
     "registration_unavailable",
+    "registration_uncertain",
+    "consent_required",
+    "pairing_used",
+    "pairing_expired",
     "update_required",
 })
 
@@ -178,6 +199,35 @@ def _entity_schema(default_entities: list[str], default_interval: str = DEFAULT_
     )
 
 
+def _local_schema(hass: HomeAssistant, defaults: Mapping[str, Any]) -> vol.Schema:
+    schema = {}
+    for role in LOCAL_ROLES:
+        units = {"%"} if role == "battery_soc" else {"W", "kW"}
+        candidates = [state.entity_id for state in hass.states.async_all("sensor")
+                      if state.attributes.get("unit_of_measurement") in units]
+        key = vol.Optional(role, description={"suggested_value": defaults[role]}) if defaults.get(role) else vol.Optional(role)
+        schema[key] = EntitySelector(EntitySelectorConfig(domain="sensor", include_entities=candidates))
+    return vol.Schema(schema)
+
+
+def _local_errors(hass: HomeAssistant, roles: Mapping[str, Any]) -> dict[str, str]:
+    if not any(roles.values()):
+        return {"base": "no_entities"}
+    errors = {}
+    selected = set()
+    for role, entity_id in roles.items():
+        if role not in LOCAL_ROLES or not entity_id:
+            continue
+        state = hass.states.get(entity_id) if isinstance(entity_id, str) else None
+        units = {"%"} if role == "battery_soc" else {"W", "kW"}
+        if state is None or not entity_id.startswith("sensor.") or state.attributes.get("unit_of_measurement") not in units:
+            errors[role] = "invalid_source"
+        elif entity_id in selected:
+            errors[role] = "duplicate_source"
+        selected.add(entity_id)
+    return errors
+
+
 def _is_energy_entity(hass: HomeAssistant | None, entity_id: str) -> bool:
     """Return True if the entity is an energy counter (device_class: energy)."""
     if hass is None:
@@ -275,10 +325,25 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
         self._registering = False
         self._registration_in_progress = False
         self._registration_sent = False
+        self._website_pairing = False
+        self._pairing_secret: str | None = None
+        self._pairing_code: str | None = None
+        self._pairing_expires: int | None = None
+        self._pairing_used = False
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Choose between an existing API key and a new account."""
-        return self.async_show_menu(step_id="user", menu_options=["api_key", "register"])
+        return self.async_show_menu(step_id="user", menu_options=["local", "api_key", "register_website", "register"])
+
+    async def async_step_local(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Configure a local overview without credentials or transport."""
+        roles = {role: user_input[role] for role in LOCAL_ROLES if user_input and user_input.get(role)}
+        errors = _local_errors(self.hass, roles) if user_input is not None else {}
+        if user_input is not None and not errors:
+            await self.async_set_unique_id(f"{DOMAIN}_local")
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(title="Powermesh Energie", data={CONF_MODE: MODE_LOCAL}, options={CONF_ROLES: roles})
+        return self.async_show_form(step_id="local", data_schema=_local_schema(self.hass, roles), errors=errors)
 
     async def async_step_api_key(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Ask for a personal API key."""
@@ -289,7 +354,7 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
                 api_key = user_input[CONF_API_KEY].strip()
                 await self.async_set_unique_id(api_key.split("_", 2)[1])
                 self._abort_if_unique_id_configured()
-                self._connection = {CONF_API_KEY: api_key}
+                self._connection = {CONF_API_KEY: api_key, CONF_STORAGE_MODE: MODE_SNAPSHOT}
                 return await self.async_step_entities()
         return self.async_show_form(
             step_id="api_key",
@@ -297,23 +362,38 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_register_website(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Prepare selected sensors, then link a new account on the website."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if user_input.get("continue") is True:
+                await self.async_set_unique_id(f"{DOMAIN}_website_pairing")
+                self._abort_if_unique_id_configured()
+                self._registering = True
+                self._website_pairing = True
+                self._connection = {CONF_STORAGE_MODE: MODE_SNAPSHOT}
+                return await self.async_step_entities()
+            errors = {"base": "consent_missing"}
+        return self.async_show_form(
+            step_id="register_website",
+            data_schema=vol.Schema({vol.Required("continue", default=False): BooleanSelector()}),
+            errors=errors,
+            description_placeholders={"url": PAIRING_URL},
+        )
+
     async def async_step_register(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Separate, explicit confirmations before a new account is requested."""
+        """Keep the operator-issued invitation flow available as a fallback."""
         errors: dict[str, str] = {}
         if user_input is not None:
             errors = {field: "consent_missing" for field in CONSENT_FIELDS if user_input.get(field) is not True}
             if not errors:
                 self._registering = True
+                self._website_pairing = False
+                self._connection = {CONF_STORAGE_MODE: MODE_READINGS}
                 return await self.async_step_entities()
         return self.async_show_form(
-            step_id="register",
-            data_schema=_consent_schema(),
-            errors=errors,
-            description_placeholders={
-                "privacy_url": PRIVACY_URL,
-                "terms_url": TERMS_URL,
-                "hours": str(ACCOUNT_SETUP_HOURS),
-            },
+            step_id="register", data_schema=_consent_schema(), errors=errors,
+            description_placeholders={"privacy_url": PRIVACY_URL, "terms_url": TERMS_URL, "hours": str(ACCOUNT_SETUP_HOURS)},
         )
 
     async def async_step_register_account(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -365,6 +445,10 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
         account = registration.account
         await self.async_set_unique_id(registration.api_key.split("_", 2)[1], raise_on_progress=False)
         data: dict[str, Any] = {CONF_API_KEY: registration.api_key}
+        data[CONF_STORAGE_MODE] = MODE_SNAPSHOT if self._website_pairing else self._connection.get(CONF_STORAGE_MODE, MODE_READINGS)
+        if self._website_pairing:
+            data[CONF_PAIRING_LINKED] = True
+            data[CONF_STORAGE_MODE] = MODE_SNAPSHOT
         if account is None:
             # Protocol error: keep the one-time key, report it, never invent a deadline.
             data[CONF_ACCOUNT_STATUS_UNKNOWN] = True
@@ -397,6 +481,8 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
                 interval = DEFAULT_UPLOAD_INTERVAL
             if not selected:
                 errors["base"] = "no_entities"
+            elif self._connection.get(CONF_STORAGE_MODE) == MODE_SNAPSHOT and len(selected) > MAX_READINGS_PER_REQUEST:
+                errors["base"] = "snapshot_limit"
             elif invalid := _incompatible(self.hass, selected):
                 errors["base"] = "incompatible"
                 placeholders["invalid"] = ", ".join(invalid)
@@ -421,6 +507,8 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
         entities = self._options[CONF_ENTITIES]
         if user_input is not None and self._registering:
             self._options = self._options | {CONF_SMOOTHING: _smoothing_choices(entities, user_input, self.hass)}
+            if self._website_pairing:
+                return await self._async_start_pairing()
             return await self.async_step_register_account()
         if user_input is not None:
             return self.async_create_entry(
@@ -429,6 +517,80 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
                 options=self._options | {CONF_SMOOTHING: _smoothing_choices(entities, user_input, self.hass)},
             )
         return self.async_show_form(step_id="smoothing", data_schema=_smoothing_schema(entities, None, self.hass))
+
+    async def _async_start_pairing(self, *, reset_secret: bool = False) -> ConfigFlowResult:
+        store = Store(self.hass, STORAGE_VERSION, PAIRING_STORE, private=True)
+        stored = await store.async_load()
+        secret = stored.get("installation_secret") if isinstance(stored, dict) and not reset_secret else None
+        if not isinstance(secret, str) or re.fullmatch(r"[a-f0-9]{64}", secret) is None:
+            secret = secrets.token_hex(32)
+            await store.async_save({"installation_secret": secret})
+        self._pairing_secret = secret
+        self._pairing_code = None
+        self._pairing_expires = None
+        self._pairing_used = False
+        try:
+            pairing = await start_pairing(async_get_clientsession(self.hass), secret)
+        except PowermeshRegistrationError as err:
+            if err.code == "pairing_used":
+                self._pairing_code = ""
+                self._pairing_used = True
+                return await self._show_pairing({"base": "pairing_pending"})
+            code = err.code if err.code in REGISTRATION_ERRORS else "registration_rejected"
+            return await self._show_pairing({"base": code})
+        self._pairing_code = pairing.code
+        self._pairing_expires = pairing.expires_at
+        await store.async_save({"installation_secret": secret, "expires_at": pairing.expires_at})
+        return await self._show_pairing()
+
+    async def _show_pairing(self, errors: dict[str, str] | None = None) -> ConfigFlowResult:
+        fields = {vol.Required("complete", default=False): BooleanSelector()}
+        if self._pairing_used:
+            fields[vol.Optional("restart", default=False)] = BooleanSelector()
+        return self.async_show_form(
+            step_id="pairing",
+            data_schema=vol.Schema(fields),
+            errors=errors or {},
+            description_placeholders={
+                "code": self._pairing_code or "",
+                "expires": dt_util.as_local(dt_util.utc_from_timestamp(self._pairing_expires)).strftime("%d.%m.%Y %H:%M %Z")
+                if self._pairing_expires else "",
+                "url": PAIRING_URL,
+            },
+        )
+
+    async def async_step_pairing(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Claim the API key only after the website confirms email and MFA setup."""
+        if not self._website_pairing or CONF_SMOOTHING not in self._options:
+            return self.async_abort(reason="registration_incomplete")
+        if not self._pairing_secret:
+            stored = await Store(self.hass, STORAGE_VERSION, PAIRING_STORE, private=True).async_load()
+            secret = stored.get("installation_secret") if isinstance(stored, dict) else None
+            if not isinstance(secret, str) or re.fullmatch(r"[a-f0-9]{64}", secret) is None:
+                return self.async_abort(reason="registration_incomplete")
+            self._pairing_secret = secret
+        if user_input is None:
+            return await self._show_pairing()
+        if user_input.get("restart") is True:
+            return await self._async_start_pairing(reset_secret=True)
+        if user_input.get("complete") is not True:
+            return await self._show_pairing({"base": "pairing_pending"})
+        if not self._pairing_code:
+            return await self._async_start_pairing()
+        try:
+            registration = await claim_pairing(async_get_clientsession(self.hass), self._pairing_secret)
+        except PowermeshRegistrationError as err:
+            if err.code == "pairing_expired":
+                refreshed = await self._async_start_pairing()
+                refreshed["errors"] = {"base": "pairing_expired"}
+                return refreshed
+            if err.code == "pairing_used":
+                self._pairing_used = True
+            code = err.code if err.code in REGISTRATION_ERRORS else "registration_rejected"
+            return await self._show_pairing({"base": code})
+        if registration is None:
+            return await self._show_pairing({"base": "pairing_pending"})
+        return await self._async_create_registered_entry(registration)
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         """The stored key was rejected."""
@@ -443,7 +605,7 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
             errors = await _async_validate(self.hass, user_input)
             if not errors:
                 api_key = user_input[CONF_API_KEY].strip()
-                connection = {CONF_API_KEY: api_key}
+                connection = {CONF_API_KEY: api_key, CONF_STORAGE_MODE: entry.data.get(CONF_STORAGE_MODE, MODE_READINGS)}
                 return self.async_update_reload_and_abort(
                     entry, data=connection,
                     unique_id=api_key.split("_", 2)[1],
@@ -469,6 +631,8 @@ class PowermeshOptionsFlow(OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Show current selection, optionally reset to the dashboard suggestion."""
+        if self.config_entry.data.get(CONF_MODE) == MODE_LOCAL:
+            return await self.async_step_local(user_input)
         suggestion, skipped = await async_suggestion(self.hass)
         placeholders = _describe(suggestion, skipped) | {"invalid": ""}
         errors: dict[str, str] = {}
@@ -488,6 +652,10 @@ class PowermeshOptionsFlow(OptionsFlow):
                 errors["base"] = "no_entities"
                 default_entities = selected
                 default_interval = interval
+            elif self.config_entry.data.get(CONF_STORAGE_MODE) == MODE_SNAPSHOT and len(selected) > MAX_READINGS_PER_REQUEST:
+                errors["base"] = "snapshot_limit"
+                default_entities = selected
+                default_interval = interval
             elif invalid := _incompatible(self.hass, selected):
                 errors["base"] = "incompatible"
                 placeholders["invalid"] = ", ".join(invalid)
@@ -502,6 +670,14 @@ class PowermeshOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="init", data_schema=schema, errors=errors, description_placeholders=placeholders
         )
+
+    async def async_step_local(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        roles = {role: user_input[role] for role in LOCAL_ROLES if user_input and user_input.get(role)}
+        errors = _local_errors(self.hass, roles) if user_input is not None else {}
+        if user_input is not None and not errors:
+            return self.async_create_entry(data={CONF_ROLES: roles})
+        defaults = roles if user_input is not None else self.config_entry.options.get(CONF_ROLES, {})
+        return self.async_show_form(step_id="local", data_schema=_local_schema(self.hass, defaults), errors=errors)
 
     async def async_step_smoothing(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Choose the smoothing per entity; new entities start with the default."""

@@ -11,7 +11,7 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import PowermeshConfigEntry
-from .const import DOMAIN, STATUSES, VERSION
+from .const import CONF_ROLES, DOMAIN, STATUSES, VERSION
 from .uploader import PowermeshUploader
 
 
@@ -20,6 +20,9 @@ async def async_setup_entry(
 ) -> None:
     """Create the diagnostic sensors."""
     uploader = entry.runtime_data
+    if uploader is None:
+        async_add_entities([PowermeshOverviewSensor(entry)])
+        return
     async_add_entities(
         [
             PowermeshStatusSensor(uploader),
@@ -27,6 +30,25 @@ async def async_setup_entry(
             PowermeshLastUploadSensor(uploader),
         ]
     )
+
+
+class PowermeshOverviewSensor(SensorEntity):
+    """Expose only selected source references for the local dashboard card."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_name = "Energieübersicht"
+    _attr_icon = "mdi:home-lightning-bolt-outline"
+    _attr_native_value = "local"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, entry: PowermeshConfigEntry) -> None:
+        self._attr_unique_id = f"{entry.entry_id}_overview"
+        self._attr_extra_state_attributes = {CONF_ROLES: dict(entry.options.get(CONF_ROLES, {}))}
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)}, name="Powermesh Energie",
+            manufacturer="Powermesh", entry_type=DeviceEntryType.SERVICE, sw_version=VERSION,
+        )
 
 
 class _PowermeshSensor(SensorEntity):
