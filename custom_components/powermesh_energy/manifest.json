@@ -2,7 +2,8 @@
   "domain": "powermesh_energy",
   "name": "Powermesh Energie",
   "after_dependencies": [
-    "energy"
+    "energy",
+    "http"
   ],
   "codeowners": [
     "@maxhro"
