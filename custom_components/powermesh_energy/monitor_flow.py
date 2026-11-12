@@ -19,6 +19,7 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
+    TextSelector,
 )
 
 from .const import (
@@ -33,7 +34,17 @@ from .const import (
     MAX_MONITORS,
     SENSITIVITY_OPTIONS,
 )
-from .monitor import Candidate, discover
+from .monitor import Candidate, classify, discover
+
+CONF_SEARCH = "search"
+CONF_BULK = "bulk"
+BULK_KEEP = "keep"
+BULK_ALL = "all"
+BULK_NONE = "none"
+BULK_OPTIONS = (BULK_KEEP, BULK_ALL, BULK_NONE)
+CONF_TYPES = "types"
+TYPE_OTHER = "other"
+TYPE_ORDER = ("power", "energy", "temperature", "humidity", TYPE_OTHER)
 
 KIND_LABELS = {
     "power": "W",
@@ -50,12 +61,27 @@ def _label(candidate: Candidate) -> str:
     return f"{candidate.name} [{unit}]{suffix}"
 
 
+def _matching(
+    options: list[SelectOptionDict], search: str, kinds: dict[str, str], types: list[str]
+) -> list[SelectOptionDict]:
+    """Options of the chosen types whose label or entity ID contains every search term."""
+    terms = search.casefold().split()
+    return [
+        option for option in options
+        if (not types or kinds[option["value"]] in types)
+        and all(term in f"{option['label']} {option['value']}".casefold() for term in terms)
+    ]
+
+
 class MonitorFlowMixin:
     """Three short steps: structure filter, suggested sensors, notification settings."""
 
     hass: Any
     _monitor_candidates: list[Candidate]
     _monitor_options: dict[str, Any]
+    _monitor_selected: list[str] | None = None
+    _monitor_search: str = ""
+    _monitor_types: list[str] = []
 
     def _monitor_current(self) -> dict[str, Any]:
         """Return the current options (empty for a new entry)."""
@@ -75,6 +101,9 @@ class MonitorFlowMixin:
             if candidates or current.get(CONF_MONITORS):
                 self._monitor_candidates = candidates
                 self._monitor_options = {CONF_AREAS: areas, CONF_LABELS: labels}
+                self._monitor_selected = None
+                self._monitor_search = ""
+                self._monitor_types = []
                 return await self.async_step_monitor_select()
             errors["base"] = "no_candidates"
         defaults = user_input if user_input is not None else current
@@ -87,33 +116,73 @@ class MonitorFlowMixin:
         return self.async_show_form(step_id="monitor", data_schema=schema, errors=errors)  # type: ignore[attr-defined]
 
     async def async_step_monitor_select(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Confirm the suggested sensors; nothing is monitored without confirmation."""
+        """Confirm the suggested sensors; search and bulk selection affect only the displayed sensors."""
         current = self._monitor_current()
         existing = [item for item in current.get(CONF_MONITORS, []) if isinstance(item, str)]
         options = [SelectOptionDict(value=item.entity_id, label=_label(item)) for item in self._monitor_candidates]
+        kinds = {item.entity_id: item.device_class for item in self._monitor_candidates}
         known = {option["value"] for option in options}
-        options.extend(SelectOptionDict(value=item, label=item) for item in existing if item not in known)
+        for item in existing:
+            if item not in known:
+                state = self.hass.states.get(item)
+                rule = classify(state.attributes) if state is not None else None
+                kinds[item] = rule[1] if rule else TYPE_OTHER
+                options.append(SelectOptionDict(value=item, label=item))
+        # Group the list by entity type; the sort is stable within a type.
+        options.sort(key=lambda option: TYPE_ORDER.index(kinds[option["value"]]) if kinds[option["value"]] in TYPE_ORDER else len(TYPE_ORDER))
+        present = [kind for kind in TYPE_ORDER if kind in kinds.values()]
+        values = [option["value"] for option in options]
+        if self._monitor_selected is None:
+            self._monitor_selected = existing or values[:MAX_MONITORS]
+            self._monitor_search = ""
+            self._monitor_types = []
         errors: dict[str, str] = {}
         if user_input is not None:
-            selected = list(dict.fromkeys(user_input.get(CONF_MONITORS, [])))
-            if not selected:
+            shown = {option["value"] for option in _matching(options, self._monitor_search, kinds, self._monitor_types)}
+            submitted = {item for item in user_input.get(CONF_MONITORS, []) if item in shown}
+            selected = {item for item in self._monitor_selected if item not in shown} | submitted
+            search = str(user_input.get(CONF_SEARCH, "")).strip()[:100]
+            types = [kind for kind in present if kind in user_input.get(CONF_TYPES, [])]
+            bulk = user_input.get(CONF_BULK, BULK_KEEP)
+            target = {option["value"] for option in _matching(options, search, kinds, types)}
+            if bulk == BULK_ALL:
+                selected |= target
+            elif bulk == BULK_NONE:
+                selected -= target
+            self._monitor_selected = [item for item in values if item in selected]
+            if search != self._monitor_search or types != self._monitor_types or bulk in (BULK_ALL, BULK_NONE):
+                # Changing a filter or applying a bulk action redisplays the list instead of continuing.
+                self._monitor_search = search
+                self._monitor_types = types
+            elif not selected:
                 errors["base"] = "no_monitors"
             elif len(selected) > MAX_MONITORS:
                 errors["base"] = "too_many_monitors"
             else:
-                self._monitor_options[CONF_MONITORS] = selected
+                self._monitor_options[CONF_MONITORS] = list(self._monitor_selected)
                 return await self.async_step_monitor_settings()
-            suggested = selected
-        else:
-            suggested = existing or [option["value"] for option in options[:MAX_MONITORS]]
+        displayed = _matching(options, self._monitor_search, kinds, self._monitor_types)
+        shown = {option["value"] for option in displayed}
         schema = vol.Schema({
-            vol.Optional(CONF_MONITORS, description={"suggested_value": suggested}): SelectSelector(
-                SelectSelectorConfig(options=options, multiple=True, mode=SelectSelectorMode.LIST)
+            vol.Optional(CONF_SEARCH, description={"suggested_value": self._monitor_search}): TextSelector(),
+            vol.Optional(CONF_TYPES, description={"suggested_value": self._monitor_types}): SelectSelector(
+                SelectSelectorConfig(options=present, multiple=True, translation_key="entity_type", mode=SelectSelectorMode.LIST)
+            ),
+            vol.Required(CONF_BULK, default=BULK_KEEP): SelectSelector(
+                SelectSelectorConfig(options=list(BULK_OPTIONS), translation_key="bulk_selection", mode=SelectSelectorMode.DROPDOWN)
+            ),
+            vol.Optional(CONF_MONITORS, description={"suggested_value": [
+                item for item in self._monitor_selected if item in shown
+            ]}): SelectSelector(
+                SelectSelectorConfig(options=displayed, multiple=True, mode=SelectSelectorMode.LIST)
             ),
         })
         return self.async_show_form(  # type: ignore[attr-defined]
             step_id="monitor_select", data_schema=schema, errors=errors,
-            description_placeholders={"count": str(len(self._monitor_candidates)), "max": str(MAX_MONITORS)},
+            description_placeholders={
+                "count": str(len(options)), "shown": str(len(displayed)),
+                "selected": str(len(self._monitor_selected)), "max": str(MAX_MONITORS),
+            },
         )
 
     async def async_step_monitor_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

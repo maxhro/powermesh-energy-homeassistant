@@ -92,7 +92,9 @@ Home-Assistant-Integrationen werden davon nicht geändert.
 1. Optional Bereiche und Labels wählen, um die Vorschläge einzugrenzen.
 2. Die vorgeschlagenen Sensoren prüfen und bestätigen (höchstens 50).
    Vorgeschlagen werden Leistung, Temperatur, Luftfeuchte (Messwerte) und
-   Energiezähler; deaktivierte Entitäten werden übergangen.
+   Energiezähler; deaktivierte Entitäten werden übergangen. Die Liste ist nach
+   Entitätstyp gruppiert und lässt sich nach Typ und per Suchbegriff filtern.
+   „Alle auswählen“ und „Keine auswählen“ wirken nur auf die angezeigten Sensoren.
 3. Empfindlichkeit (niedrig, mittel, hoch) und Benachrichtigungen wählen.
 
 Auswahl und Einstellungen lassen sich unter **Konfigurieren** ändern. Bei
@@ -116,13 +118,11 @@ Meldung unbestätigt ist, und eignet sich als Auslöser eigener Automationen.
 ### Dashboard-Karten
 
 Beide Karten liegen in derselben Datei, die die Integration lokal in HA
-bereitstellt. Einmalig unter **Einstellungen → Dashboards → Ressourcen**
-(bei Bedarf erweiterten Modus aktivieren) diese Ressource hinzufügen:
-
-- URL: `/powermesh-energy/powermesh-energy-card.js`
-- Typ: **JavaScript-Modul**
-
-Danach das Dashboard neu laden und **Bearbeiten → Karte hinzufügen** wählen.
+bereitstellt und automatisch im Frontend lädt. Nach der Einrichtung das
+Dashboard neu laden und **Bearbeiten → Karte hinzufügen** wählen; ein manueller
+Eintrag unter **Einstellungen → Dashboards → Ressourcen** ist nicht nötig.
+Wurde die Ressource `/powermesh-energy/powermesh-energy-card.js` früher von
+Hand hinzugefügt, kann sie dort entfernt werden.
 
 **Powermesh Auffälligkeiten** zeigt offene Meldungen mit
 **Bestätigen**-Schaltfläche, je Sensor Status, aktuellen Wert, Normalbereich als

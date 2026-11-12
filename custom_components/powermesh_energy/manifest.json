@@ -3,6 +3,7 @@
   "name": "Powermesh Energie",
   "after_dependencies": [
     "energy",
+    "frontend",
     "http"
   ],
   "codeowners": [

@@ -105,13 +105,18 @@ async def test_local_entry_setup_options_diagnostics_and_removal(hass):
     resources = AsyncMock()
     with patch("custom_components.powermesh_energy.PowermeshClient") as client, patch.object(
         hass.config_entries, "async_forward_entry_setups", AsyncMock()
-    ), patch.object(hass, "http", MagicMock(async_register_static_paths=resources)):
+    ), patch.object(hass, "http", MagicMock(async_register_static_paths=resources)), patch(
+        "custom_components.powermesh_energy.add_extra_js_url"
+    ) as extra_js:
+        hass.config.components.add("frontend")
         assert await async_setup_entry(hass, entry)
         assert entry.runtime_data is None
         client.assert_not_called()
         assert resources.call_args.args[0][0].url_path == CARD_URL
+        extra_js.assert_called_once_with(hass, f"{CARD_URL}?v=0.9.0")
         await async_setup_entry(hass, entry)
         assert resources.call_count == 1
+        assert extra_js.call_count == 1
     sensor = PowermeshOverviewSensor(entry)
     assert sensor.extra_state_attributes == {CONF_ROLES: {"solar_power": "sensor.solar"}}
     assert await async_get_config_entry_diagnostics(hass, entry) == {"mode": "local", "integration_version": "0.9.0"}
