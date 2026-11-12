@@ -30,8 +30,9 @@
       },
       "monitor_select": {
         "title": "Auffälligkeiten: Sensoren",
-        "description": "{count} passende Sensoren gefunden. Bestätige bis zu {max} Sensoren; nur bestätigte Sensoren werden ausgewertet.",
-        "data": {"monitors": "Überwachte Sensoren"}
+        "description": "{count} passende Sensoren gefunden, {shown} angezeigt, {selected} ausgewählt (höchstens {max}). Suchbegriff eingeben und absenden, um die Liste zu filtern. „Alle auswählen“/„Keine auswählen“ wirken nur auf die angezeigten Sensoren. Zum Fortfahren ohne geänderte Suche oder Aktion absenden; nur bestätigte Sensoren werden ausgewertet.",
+        "data": {"search": "Suche", "types": "Entitätstyp", "bulk": "Auswahlaktion", "monitors": "Überwachte Sensoren"},
+        "data_description": {"search": "Name, Bereich, Label, Einheit oder Entitäts-ID; mehrere Wörter grenzen weiter ein.", "types": "Leer: alle Typen. Die Liste ist nach Typ gruppiert."}
       },
       "monitor_settings": {
         "title": "Auffälligkeiten: Benachrichtigungen",
@@ -155,8 +156,9 @@
       },
       "monitor_select": {
         "title": "Auffälligkeiten: Sensoren",
-        "description": "{count} passende Sensoren gefunden. Bestätige bis zu {max} Sensoren; entfernte Sensoren verlieren ihren gelernten Normalbereich.",
-        "data": {"monitors": "Überwachte Sensoren"}
+        "description": "{count} passende Sensoren gefunden, {shown} angezeigt, {selected} ausgewählt (höchstens {max}). Suchbegriff eingeben und absenden, um die Liste zu filtern. „Alle auswählen“/„Keine auswählen“ wirken nur auf die angezeigten Sensoren. Zum Fortfahren ohne geänderte Suche oder Aktion absenden; entfernte Sensoren verlieren ihren gelernten Normalbereich.",
+        "data": {"search": "Suche", "types": "Entitätstyp", "bulk": "Auswahlaktion", "monitors": "Überwachte Sensoren"},
+        "data_description": {"search": "Name, Bereich, Label, Einheit oder Entitäts-ID; mehrere Wörter grenzen weiter ein.", "types": "Leer: alle Typen. Die Liste ist nach Typ gruppiert."}
       },
       "monitor_settings": {
         "title": "Auffälligkeiten: Benachrichtigungen",
@@ -295,6 +297,22 @@
     }
   },
   "selector": {
+    "entity_type": {
+      "options": {
+        "power": "Leistung",
+        "energy": "Energie (Zähler)",
+        "temperature": "Temperatur",
+        "humidity": "Luftfeuchte",
+        "other": "Sonstige"
+      }
+    },
+    "bulk_selection": {
+      "options": {
+        "keep": "Auswahl beibehalten",
+        "all": "Alle auswählen (angezeigte)",
+        "none": "Keine auswählen (angezeigte)"
+      }
+    },
     "sensitivity": {
       "options": {
         "low": "Niedrig (nur starke Abweichungen)",

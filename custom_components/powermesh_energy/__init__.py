@@ -11,6 +11,7 @@ from pathlib import Path
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
@@ -31,6 +32,7 @@ from .const import (
     MODE_MONITOR,
     PAIRING_STORE,
     STORAGE_VERSION,
+    VERSION,
 )
 from .monitor import AnomalyMonitor
 from .uploader import PowermeshUploader
@@ -85,6 +87,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: PowermeshConfigEntry) ->
         await hass.http.async_register_static_paths([
             StaticPathConfig(CARD_URL, str(Path(__file__).parent / "frontend" / "powermesh-energy-card.js"), False)
         ])
+        if "frontend" in hass.config.components:
+            # Version query busts browser caches after updates; no manual dashboard resource is needed.
+            add_extra_js_url(hass, f"{CARD_URL}?v={VERSION}")
         hass.data[f"{DOMAIN}_card_registered"] = True
     mode = entry.data.get(CONF_MODE)
     if mode == MODE_MONITOR:

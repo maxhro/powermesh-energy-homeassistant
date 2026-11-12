@@ -30,8 +30,9 @@
       },
       "monitor_select": {
         "title": "Anomaly detection: sensors",
-        "description": "{count} suitable sensors found. Confirm up to {max} sensors; only confirmed sensors are evaluated.",
-        "data": {"monitors": "Monitored sensors"}
+        "description": "{count} suitable sensors found, {shown} shown, {selected} selected (at most {max}). Enter a search term and submit to filter the list. \"Select all\"/\"Select none\" only affect the shown sensors. Submit without changing search or action to continue; only confirmed sensors are evaluated.",
+        "data": {"search": "Search", "types": "Entity type", "bulk": "Selection action", "monitors": "Monitored sensors"},
+        "data_description": {"search": "Name, area, label, unit or entity ID; several words narrow the list.", "types": "Empty: all types. The list is grouped by type."}
       },
       "monitor_settings": {
         "title": "Anomaly detection: notifications",
@@ -155,8 +156,9 @@
       },
       "monitor_select": {
         "title": "Anomaly detection: sensors",
-        "description": "{count} suitable sensors found. Confirm up to {max} sensors; removed sensors lose their learned normal range.",
-        "data": {"monitors": "Monitored sensors"}
+        "description": "{count} suitable sensors found, {shown} shown, {selected} selected (at most {max}). Enter a search term and submit to filter the list. \"Select all\"/\"Select none\" only affect the shown sensors. Submit without changing search or action to continue; removed sensors lose their learned normal range.",
+        "data": {"search": "Search", "types": "Entity type", "bulk": "Selection action", "monitors": "Monitored sensors"},
+        "data_description": {"search": "Name, area, label, unit or entity ID; several words narrow the list.", "types": "Empty: all types. The list is grouped by type."}
       },
       "monitor_settings": {
         "title": "Anomaly detection: notifications",
@@ -295,6 +297,22 @@
     }
   },
   "selector": {
+    "entity_type": {
+      "options": {
+        "power": "Power",
+        "energy": "Energy (meter)",
+        "temperature": "Temperature",
+        "humidity": "Humidity",
+        "other": "Other"
+      }
+    },
+    "bulk_selection": {
+      "options": {
+        "keep": "Keep selection",
+        "all": "Select all (shown)",
+        "none": "Select none (shown)"
+      }
+    },
     "sensitivity": {
       "options": {
         "low": "Low (only strong deviations)",

@@ -280,6 +280,42 @@ async def test_config_flow_entities_service_and_diagnostics(hass):
     await hass.async_block_till_done()
 
 
+async def test_sensor_selection_search_type_filter_and_bulk_affect_shown_only(hass):
+    hass.states.async_set(WASHER, "100", POWER | {"friendly_name": "Waschmaschine"})
+    hass.states.async_set("sensor.dryer_power", "50", POWER | {"friendly_name": "Trockner"})
+    hass.states.async_set(METER, "1000", ENERGY | {"friendly_name": "Netzbezug"})
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "monitor"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    schema = result["data_schema"].schema
+    types_key = next(key for key in schema if key == "types")
+    assert schema[types_key].config["options"] == ["power", "energy"]
+    values = lambda result: [option["value"] for option in next(  # noqa: E731
+        value for key, value in result["data_schema"].schema.items() if key == CONF_MONITORS).config["options"]]
+    assert values(result)[-1] == METER
+    assert result["description_placeholders"]["selected"] == "3"
+
+    flow_id = result["flow_id"]
+    result = await hass.config_entries.flow.async_configure(
+        flow_id, {CONF_MONITORS: [WASHER, "sensor.dryer_power", METER], "types": ["energy"], "bulk": "keep"})
+    assert result["step_id"] == "monitor_select" and values(result) == [METER]
+    result = await hass.config_entries.flow.async_configure(flow_id, {CONF_MONITORS: [METER], "types": ["energy"], "bulk": "none"})
+    assert values(result) == [METER] and result["description_placeholders"]["selected"] == "2"
+
+    result = await hass.config_entries.flow.async_configure(flow_id, {CONF_MONITORS: [], "types": [], "search": "trockner", "bulk": "keep"})
+    assert values(result) == ["sensor.dryer_power"] and result["description_placeholders"]["shown"] == "1"
+    result = await hass.config_entries.flow.async_configure(
+        flow_id, {CONF_MONITORS: ["sensor.dryer_power"], "search": "trockner", "bulk": "none"})
+    assert result["description_placeholders"]["selected"] == "1"
+    result = await hass.config_entries.flow.async_configure(flow_id, {CONF_MONITORS: [], "search": "", "bulk": "all"})
+    assert result["description_placeholders"]["selected"] == "3"
+    result = await hass.config_entries.flow.async_configure(
+        flow_id, {CONF_MONITORS: [WASHER, "sensor.dryer_power"], "search": "", "bulk": "keep"})
+    assert result["step_id"] == "monitor_settings"
+    result = await hass.config_entries.flow.async_configure(flow_id, {CONF_SENSITIVITY: "medium", CONF_NOTIFY_PERSISTENT: False})
+    assert set(result["options"][CONF_MONITORS]) == {WASHER, "sensor.dryer_power"}
+
+
 async def test_no_candidates_error(hass):
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "monitor"})

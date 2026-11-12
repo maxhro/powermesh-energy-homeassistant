@@ -179,6 +179,57 @@ export function bandGeometry(value, low, high) {
   };
 }
 
+const round1 = (value) => Math.round(value * 10) / 10;
+
+export function numericState(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
+  return typeof value === "string" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) ? Number(value) : NaN;
+}
+
+/** Step-line SVG path (values hold until the next change) with optional normal-range band; NaN values are gaps. */
+export function sparklinePath(points, start, end, width, height, low, high) {
+  const finite = points.filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v));
+  if (!finite.length || !(end > start)) return null;
+  const band = Number.isFinite(low) && Number.isFinite(high) && high >= low;
+  let min = Math.min(...finite.map(([, v]) => v), ...(band ? [low] : []));
+  let max = Math.max(...finite.map(([, v]) => v), ...(band ? [high] : []));
+  if (max === min) { max += 1; min -= 1; }
+  const pad = (max - min) * 0.05;
+  min -= pad;
+  max += pad;
+  const x = (t) => round1(Math.min(1, Math.max(0, (t - start) / (end - start))) * width);
+  const y = (v) => round1((1 - (v - min) / (max - min)) * height);
+  const parts = [];
+  let open = false;
+  for (const [t, v] of points) {
+    if (!Number.isFinite(t)) continue;
+    if (!Number.isFinite(v)) {
+      if (open) parts.push(`H${x(t)}`);
+      open = false;
+    } else if (!open) {
+      parts.push(`M${x(t)} ${y(v)}`);
+      open = true;
+    } else {
+      parts.push(`H${x(t)} V${y(v)}`);
+    }
+  }
+  if (open) parts.push(`H${x(end)}`);
+  return { path: parts.join(" "), bandTop: band ? y(high) : null, bandBottom: band ? y(low) : null };
+}
+
+/** Horizontal timeline segments in percent of the window; open findings last until `end`. */
+export function timelineSegments(findings, start, end) {
+  if (!(end > start)) return [];
+  return findings.flatMap((finding) => {
+    const from = Date.parse(finding.since) / 1000;
+    const to = finding.resolved ? Date.parse(finding.resolved) / 1000 : end;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to < start || from > end) return [];
+    const left = Math.max(0, (Math.max(from, start) - start) / (end - start)) * 100;
+    const right = Math.min(1, (Math.min(to, end) - start) / (end - start)) * 100;
+    return [{ left: round1(left), width: round1(Math.max(0.5, right - left)), type: finding.type, category: finding.category, open: !finding.resolved }];
+  });
+}
+
 const findingTexts = {
   deviation: "Außerhalb des Normalbereichs",
   counter_glitch: "Zählersprung (kurzzeitig gesunken)",
@@ -201,6 +252,17 @@ function el(tag, className, text) {
   if (text != null) node.textContent = text;
   return node;
 }
+
+function svg(tag, attributes = {}) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
+  return node;
+}
+
+const ANOMALY_DEFAULTS = { show_monitors: true, show_recent: true, show_history: false, history_hours: 6, show_learning_bar: false, show_timeline: false, timeline_days: 7 };
+const HISTORY_REFRESH_MS = 300000;
+const SPARK_WIDTH = 300;
+const SPARK_HEIGHT = 48;
 
 function formatTime(iso, language) {
   const stamp = Date.parse(iso);
@@ -234,6 +296,20 @@ class PowermeshAnomalyCard extends HTMLElement {
         .marker.outside { background: var(--error-color, #b34f55); }
         .empty { color: var(--secondary-text-color); font-size: 14px; padding: 8px 4px; }
         details summary { cursor: pointer; color: var(--secondary-text-color); font-size: 14px; padding: 8px 4px; }
+        .progress { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--secondary-background-color); overflow: hidden; }
+        .progress > div { height: 100%; background: var(--info-color, #22766d); }
+        .spark { grid-column: 1 / -1; display: block; width: 100%; height: 48px; }
+        .spark .spark-band { fill: color-mix(in srgb, var(--success-color, #427a3b) 22%, transparent); }
+        .spark .spark-line { fill: none; stroke: var(--primary-color); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+        .spark-note { grid-column: 1 / -1; color: var(--secondary-text-color); font-size: 11px; }
+        .timeline { position: relative; height: 18px; margin: 4px 4px 2px; border-radius: 4px; background: var(--secondary-background-color); }
+        .timeline span { position: absolute; top: 3px; bottom: 3px; border-radius: 3px; background: var(--error-color, #b34f55); }
+        .timeline span.data_quality { background: var(--warning-color, #b57912); }
+        .timeline span.done { opacity: 0.55; }
+        .timeline-axis { display: flex; justify-content: space-between; color: var(--secondary-text-color); font-size: 11px; padding: 0 4px 4px; }
+        .legend { display: flex; flex-wrap: wrap; gap: 12px; color: var(--secondary-text-color); font-size: 11px; padding: 0 4px; }
+        .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; background: var(--error-color, #b34f55); }
+        .legend i.data_quality { background: var(--warning-color, #b57912); }
       </style>
       <ha-card><header><ha-icon icon="mdi:alert-decagram-outline"></ha-icon><h2></h2><span class="count"></span></header><div class="body"></div></ha-card>`;
   }
@@ -251,7 +327,13 @@ class PowermeshAnomalyCard extends HTMLElement {
       throw new Error("Bitte den Sensor „Offene Auffälligkeiten“ auswählen");
     }
     if (config.title != null && (typeof config.title !== "string" || config.title.length > 120)) throw new Error("Titel ungültig");
-    this._config = { show_monitors: true, show_recent: true, ...config };
+    if (config.history_hours != null && (!Number.isInteger(config.history_hours) || config.history_hours < 1 || config.history_hours > 48)) {
+      throw new Error("Verlauf: 1 bis 48 Stunden");
+    }
+    if (config.timeline_days != null && (!Number.isInteger(config.timeline_days) || config.timeline_days < 1 || config.timeline_days > 30)) {
+      throw new Error("Zeitleiste: 1 bis 30 Tage");
+    }
+    this._config = { ...ANOMALY_DEFAULTS, ...config };
     this.render();
   }
 
@@ -265,6 +347,83 @@ class PowermeshAnomalyCard extends HTMLElement {
 
   _moreInfo(entityId) {
     this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId }, bubbles: true, composed: true }));
+  }
+
+  async _loadHistory(entityIds) {
+    const hours = this._config.history_hours;
+    const key = `${hours}|${entityIds.join(",")}`;
+    if (this._historyLoading || (this._historyKey === key && Date.now() - this._historyAt < HISTORY_REFRESH_MS)) return;
+    this._historyLoading = true;
+    const end = Date.now();
+    const start = end - hours * 3600000;
+    try {
+      // Reads Home Assistant's own recorder history; nothing is stored or sent elsewhere.
+      const result = await this._hass.callWS({
+        type: "history/history_during_period", start_time: new Date(start).toISOString(), end_time: new Date(end).toISOString(),
+        entity_ids: entityIds, minimal_response: true, no_attributes: true, significant_changes_only: false,
+      });
+      const series = {};
+      for (const id of entityIds) {
+        series[id] = (Array.isArray(result?.[id]) ? result[id] : []).map((item) => [
+          Number(item.lu ?? item.lc ?? Date.parse(item.last_updated ?? item.last_changed) / 1000),
+          numericState(item.s ?? item.state),
+        ]);
+      }
+      this._history = { start: start / 1000, end: end / 1000, series };
+    } catch {
+      this._history = { error: true };
+    } finally {
+      this._historyKey = key;
+      this._historyAt = Date.now();
+      this._historyLoading = false;
+      this.render();
+    }
+  }
+
+  _sparkline(monitor) {
+    const history = this._history;
+    if (!history || this._historyKey?.split("|")[1]?.split(",").includes(monitor.entity_id) !== true) {
+      return el("span", "spark-note", "Verlauf wird geladen …");
+    }
+    if (history.error) return el("span", "spark-note", "Verlauf nicht verfügbar.");
+    const geometry = sparklinePath(history.series[monitor.entity_id] || [], history.start, history.end, SPARK_WIDTH, SPARK_HEIGHT,
+      monitor.kind === "baseline" ? monitor.band_low : NaN, monitor.kind === "baseline" ? monitor.band_high : NaN);
+    if (!geometry) return el("span", "spark-note", "Keine Werte im Zeitraum.");
+    const chart = svg("svg", { class: "spark", viewBox: `0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`, preserveAspectRatio: "none", role: "img",
+      "aria-label": `Verlauf der letzten ${this._config.history_hours} Stunden${geometry.bandTop != null ? " mit Normalbereich" : ""}` });
+    if (geometry.bandTop != null) {
+      chart.append(svg("rect", { class: "spark-band", x: 0, y: geometry.bandTop, width: SPARK_WIDTH, height: Math.max(0.5, geometry.bandBottom - geometry.bandTop) }));
+    }
+    chart.append(svg("path", { class: "spark-line", d: geometry.path }));
+    return chart;
+  }
+
+  _timeline(findings, language) {
+    const end = Date.now() / 1000;
+    const start = end - this._config.timeline_days * 86400;
+    const section = el("section");
+    section.append(el("h3", null, `Zeitleiste (${this._config.timeline_days} Tage)`));
+    const bar = el("div", "timeline");
+    bar.setAttribute("role", "img");
+    const segments = timelineSegments(findings, start, end);
+    bar.setAttribute("aria-label", `${segments.length} Auffälligkeiten im Zeitraum`);
+    findings.forEach((finding) => {
+      const [segment] = timelineSegments([finding], start, end);
+      if (!segment) return;
+      const span = el("span", `${segment.category === "data_quality" ? "data_quality" : "behavior"}${segment.open ? "" : " done"}`);
+      span.style.left = `${segment.left}%`;
+      span.style.width = `${segment.width}%`;
+      span.title = `${finding.name || finding.entity_id}: ${findingTexts[finding.type] || finding.type}, ${formatTime(finding.since, language)}`;
+      bar.append(span);
+    });
+    const axis = el("div", "timeline-axis");
+    const date = (seconds) => new Intl.DateTimeFormat(language, { dateStyle: "short" }).format(seconds * 1000);
+    axis.append(el("span", null, date(start)), el("span", null, "jetzt"));
+    const legend = el("div", "legend");
+    const item = (category, text) => { const entry = el("span"); entry.append(el("i", category), document.createTextNode(text)); return entry; };
+    legend.append(item("behavior", "Verhalten"), item("data_quality", "Datenqualität"), el("span", null, "blass = beendet"));
+    section.append(bar, axis, legend);
+    return section;
   }
 
   _finding(finding, language) {
@@ -303,6 +462,18 @@ class PowermeshAnomalyCard extends HTMLElement {
     if (monitor.status === "learning" && Number.isFinite(monitor.learning)) parts.push(`Lernfortschritt ${Math.round(monitor.learning * 100)} %`);
     if (monitor.kind === "counter") parts.push("Zählerprüfung");
     row.append(el("span", "meta", parts.filter(Boolean).join(" · ")));
+    if (this._config.show_learning_bar && monitor.status === "learning" && Number.isFinite(monitor.learning)) {
+      const progress = el("div", "progress");
+      progress.setAttribute("role", "progressbar");
+      progress.setAttribute("aria-valuemin", "0");
+      progress.setAttribute("aria-valuemax", "100");
+      progress.setAttribute("aria-valuenow", String(Math.round(monitor.learning * 100)));
+      progress.setAttribute("aria-label", "Lernfortschritt");
+      const fill = el("div");
+      fill.style.width = `${Math.min(100, Math.max(0, monitor.learning * 100))}%`;
+      progress.append(fill);
+      row.append(progress);
+    }
     const geometry = monitor.kind === "baseline" ? bandGeometry(value, monitor.band_low, monitor.band_high) : null;
     if (geometry) {
       const gauge = el("div", "gauge");
@@ -318,6 +489,7 @@ class PowermeshAnomalyCard extends HTMLElement {
       }
       row.append(gauge);
     }
+    if (this._config.show_history) row.append(this._sparkline(monitor));
     return row;
   }
 
@@ -342,6 +514,9 @@ class PowermeshAnomalyCard extends HTMLElement {
       else findings.append(el("div", "empty", "Keine offenen Auffälligkeiten."));
       sections.push(findings);
       const monitors = Array.isArray(attributes.monitors) ? attributes.monitors : [];
+      if (this._config.show_monitors && this._config.show_history && monitors.length) {
+        this._loadHistory(monitors.map((monitor) => monitor.entity_id).filter((id) => /^sensor\.[a-z0-9_]+$/.test(id)).sort());
+      }
       if (this._config.show_monitors && monitors.length) {
         const section = el("section");
         section.append(el("h3", null, "Überwachte Sensoren"));
@@ -349,6 +524,7 @@ class PowermeshAnomalyCard extends HTMLElement {
         sections.push(section);
       }
       const recent = Array.isArray(attributes.recent) ? attributes.recent : [];
+      if (this._config.show_timeline) sections.push(this._timeline([...list, ...recent], language));
       if (this._config.show_recent && recent.length) {
         const details = el("details");
         details.open = this._recentOpen === true;
@@ -374,8 +550,17 @@ class PowermeshAnomalyCardEditor extends HTMLElement {
       { name: "entity", selector: { entity: { domain: "sensor", integration: "powermesh_energy" } } },
       { name: "show_monitors", selector: { boolean: {} } },
       { name: "show_recent", selector: { boolean: {} } },
+      { name: "show_learning_bar", selector: { boolean: {} } },
+      { name: "show_history", selector: { boolean: {} } },
+      { name: "history_hours", selector: { number: { min: 1, max: 48, mode: "box", unit_of_measurement: "h" } } },
+      { name: "show_timeline", selector: { boolean: {} } },
+      { name: "timeline_days", selector: { number: { min: 1, max: 30, mode: "box", unit_of_measurement: "d" } } },
     ];
-    this._form.computeLabel = ({ name }) => ({ title: "Titel", entity: "Offene Auffälligkeiten", show_monitors: "Überwachte Sensoren zeigen", show_recent: "Beendete Auffälligkeiten zeigen" })[name] || name;
+    this._form.computeLabel = ({ name }) => ({
+      title: "Titel", entity: "Offene Auffälligkeiten", show_monitors: "Überwachte Sensoren zeigen", show_recent: "Beendete Auffälligkeiten zeigen",
+      show_learning_bar: "Lernfortschritt als Balken", show_history: "Verlaufsdiagramm mit Normalbereich", history_hours: "Verlaufszeitraum",
+      show_timeline: "Zeitleiste der Auffälligkeiten", timeline_days: "Zeitleistenzeitraum",
+    })[name] || name;
     this._form.addEventListener("value-changed", (event) => {
       event.stopPropagation();
       this._config = { ...this._config, ...event.detail.value };
@@ -383,7 +568,7 @@ class PowermeshAnomalyCardEditor extends HTMLElement {
     });
     this.shadowRoot.append(this._form);
   }
-  setConfig(config) { this._config = { show_monitors: true, show_recent: true, ...config }; this._form.data = this._config; }
+  setConfig(config) { this._config = { ...ANOMALY_DEFAULTS, ...config }; this._form.data = this._config; }
   set hass(hass) { this._form.hass = hass; }
 }
 

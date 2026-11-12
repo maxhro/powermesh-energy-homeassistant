@@ -96,7 +96,7 @@ globalThis.HTMLElement = class {};
 globalThis.customElements = { get: () => undefined, define: () => {} };
 globalThis.window = { customCards: [] };
 const cardSource = readFileSync(join(root, component, 'frontend/powermesh-energy-card.js'), 'utf8');
-const { sourceValue, bandGeometry } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
+const { sourceValue, bandGeometry, sparklinePath, timelineSegments, numericState } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
 const now = Date.parse('2026-11-05T12:00:00Z');
 const source = (value, unit = 'W', stamp = '2026-11-05T12:00:00Z') => ({
   state: value, attributes: { unit_of_measurement: unit }, last_updated: stamp,
@@ -134,4 +134,30 @@ test('anomaly widget positions the learned band and flags values outside it', ()
   assert.equal(bandGeometry(Number.NaN, 80, 120).marker, null);
   assert.equal(bandGeometry(100, 120, 80), null);
   assert.equal(bandGeometry(100, undefined, 80), null);
+});
+
+test('optional history chart draws a step line with gaps and the learned band', () => {
+  const chart = sparklinePath([[-10, 10], [50, 20], [60, Number.NaN], [80, 10]], 0, 100, 100, 10, 10, 20);
+  assert.deepEqual(chart, { path: 'M0 9.5 H50 V0.5 H60 M80 9.5 H100', bandTop: 0.5, bandBottom: 9.5 });
+  assert.equal(sparklinePath([[10, Number.NaN]], 0, 100, 100, 10), null);
+  assert.equal(sparklinePath([[10, 5]], 100, 100, 100, 10), null);
+  assert.equal(sparklinePath([[10, 5]], 0, 100, 100, 10).bandTop, null);
+  assert.equal(numericState('12.5'), 12.5);
+  for (const value of ['unavailable', 'unknown', '', '0x10', 'Infinity', null]) assert.ok(Number.isNaN(numericState(value)));
+});
+
+test('optional timeline positions findings in the window and keeps open findings until now', () => {
+  const start = Date.parse('2026-11-01T00:00:00Z') / 1000;
+  const end = start + 100 * 3600;
+  const iso = (hours) => new Date((start + hours * 3600) * 1000).toISOString();
+  assert.deepEqual(timelineSegments([
+    { since: iso(25), resolved: iso(50), type: 'deviation', category: 'behavior' },
+    { since: iso(90), type: 'no_data', category: 'data_quality' },
+    { since: iso(-20), resolved: iso(-10), type: 'deviation', category: 'behavior' },
+    { since: 'invalid', type: 'deviation', category: 'behavior' },
+  ], start, end), [
+    { left: 25, width: 25, type: 'deviation', category: 'behavior', open: false },
+    { left: 90, width: 10, type: 'no_data', category: 'data_quality', open: true },
+  ]);
+  assert.deepEqual(timelineSegments([], end, start), []);
 });
