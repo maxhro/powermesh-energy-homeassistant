@@ -113,13 +113,13 @@ async def test_local_entry_setup_options_diagnostics_and_removal(hass):
         assert entry.runtime_data is None
         client.assert_not_called()
         assert resources.call_args.args[0][0].url_path == CARD_URL
-        extra_js.assert_called_once_with(hass, f"{CARD_URL}?v=0.9.0")
+        extra_js.assert_called_once_with(hass, f"{CARD_URL}?v=0.9.1")
         await async_setup_entry(hass, entry)
         assert resources.call_count == 1
         assert extra_js.call_count == 1
     sensor = PowermeshOverviewSensor(entry)
     assert sensor.extra_state_attributes == {CONF_ROLES: {"solar_power": "sensor.solar"}}
-    assert await async_get_config_entry_diagnostics(hass, entry) == {"mode": "local", "integration_version": "0.9.0"}
+    assert await async_get_config_entry_diagnostics(hass, entry) == {"mode": "local", "integration_version": "0.9.1"}
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["step_id"] == "local"
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"grid_import_power": "sensor.solar"})

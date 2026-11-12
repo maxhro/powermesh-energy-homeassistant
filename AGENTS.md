@@ -2,7 +2,7 @@
 
 ## Current baseline
 
-- Version `0.9.0` prototype: local anomaly monitoring (`monitor.py`,
+- Version `0.9.1` prototype: local anomaly monitoring (`monitor.py`,
   `monitor_flow.py`). Owner-confirmed sensors (max 50) suggested from areas,
   labels and devices: learned EWMA normal range for power/temperature/humidity,
   counter glitch/decrease checks for `total_increasing` energy, no-data checks,
