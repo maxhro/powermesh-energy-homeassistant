@@ -12,8 +12,8 @@
   "dependencies": [],
   "documentation": "https://github.com/maxhro/powermesh-energy-homeassistant",
   "integration_type": "service",
-  "iot_class": "cloud_push",
+  "iot_class": "calculated",
   "issue_tracker": "https://github.com/maxhro/powermesh-energy-homeassistant/issues",
   "requirements": [],
-  "version": "0.8.0"
+  "version": "0.9.0"
 }

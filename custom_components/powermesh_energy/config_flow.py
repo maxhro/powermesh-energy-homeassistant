@@ -71,7 +71,10 @@ from .const import (
     TERMS_URL,
     WEBSITE_URL,
 )
+from . import const
+from .const import MODE_MONITOR
 from .energy_dashboard import async_suggestion
+from .monitor_flow import MonitorFlowMixin
 from .readings import ENTITY_ID_PATTERN
 from .smoothing import OPTIONS as SMOOTHING_OPTIONS, option_for
 from .uploader import account_issue_placeholders
@@ -314,8 +317,15 @@ def _incompatible(hass: HomeAssistant, entities: list[str]) -> list[str]:
     ]
 
 
-class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Set up powermesh.de with a personal API key or a new invited account."""
+def _cloud_disabled(flow: ConfigFlow | OptionsFlow) -> ConfigFlowResult | None:
+    """Refuse cloud steps while the REST transfer is disabled."""
+    if const.CLOUD_TRANSFER_ENABLED:
+        return None
+    return flow.async_abort(reason="cloud_transfer_disabled")
+
+
+class PowermeshConfigFlow(MonitorFlowMixin, ConfigFlow, domain=DOMAIN):
+    """Set up local monitoring, the local overview or (when enabled) powermesh.de."""
 
     VERSION = 1
 
@@ -332,8 +342,20 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
         self._pairing_used = False
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Choose between an existing API key and a new account."""
-        return self.async_show_menu(step_id="user", menu_options=["local", "api_key", "register_website", "register"])
+        """Choose local monitoring, the local overview or (when enabled) a cloud connection."""
+        menu = ["monitor", "local"]
+        if const.CLOUD_TRANSFER_ENABLED:
+            menu += ["api_key", "register_website", "register"]
+        return self.async_show_menu(step_id="user", menu_options=menu)
+
+    async def async_step_monitor(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Allow only one monitoring entry."""
+        await self.async_set_unique_id(f"{DOMAIN}_monitor")
+        self._abort_if_unique_id_configured()
+        return await super().async_step_monitor(user_input)
+
+    async def _async_finish_monitor(self, options: dict[str, Any]) -> ConfigFlowResult:
+        return self.async_create_entry(title="Powermesh Auffälligkeiten", data={CONF_MODE: MODE_MONITOR}, options=options)
 
     async def async_step_local(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Configure a local overview without credentials or transport."""
@@ -347,6 +369,8 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_api_key(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Ask for a personal API key."""
+        if disabled := _cloud_disabled(self):
+            return disabled
         errors: dict[str, str] = {}
         if user_input is not None:
             errors = await _async_validate(self.hass, user_input)
@@ -364,6 +388,8 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_register_website(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Prepare selected sensors, then link a new account on the website."""
+        if disabled := _cloud_disabled(self):
+            return disabled
         errors: dict[str, str] = {}
         if user_input is not None:
             if user_input.get("continue") is True:
@@ -383,6 +409,8 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_register(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Keep the operator-issued invitation flow available as a fallback."""
+        if disabled := _cloud_disabled(self):
+            return disabled
         errors: dict[str, str] = {}
         if user_input is not None:
             errors = {field: "consent_missing" for field in CONSENT_FIELDS if user_input.get(field) is not True}
@@ -398,6 +426,8 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_register_account(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Send the single registration request and keep the issued key at once."""
+        if disabled := _cloud_disabled(self):
+            return disabled
         if self._registration_sent:
             return self.async_abort(reason="registration_uncertain")
         if not self._registering or CONF_SMOOTHING not in self._options:
@@ -471,6 +501,8 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_entities(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Propose entities from the energy dashboard; the user may adjust them."""
+        if disabled := _cloud_disabled(self):
+            return disabled
         suggestion, skipped = await async_suggestion(self.hass)
         errors: dict[str, str] = {}
         placeholders = _describe(suggestion, skipped) | {"invalid": ""}
@@ -504,6 +536,8 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_smoothing(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Choose the smoothing per entity (default: 1 min mean)."""
+        if disabled := _cloud_disabled(self):
+            return disabled
         entities = self._options[CONF_ENTITIES]
         if user_input is not None and self._registering:
             self._options = self._options | {CONF_SMOOTHING: _smoothing_choices(entities, user_input, self.hass)}
@@ -561,6 +595,8 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_pairing(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Claim the API key only after the website confirms email and MFA setup."""
+        if disabled := _cloud_disabled(self):
+            return disabled
         if not self._website_pairing or CONF_SMOOTHING not in self._options:
             return self.async_abort(reason="registration_incomplete")
         if not self._pairing_secret:
@@ -598,6 +634,8 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """New credentials do not silently authorize previously buffered data."""
+        if disabled := _cloud_disabled(self):
+            return disabled
         entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         assert entry is not None
         errors: dict[str, str] = {}
@@ -623,16 +661,26 @@ class PowermeshConfigFlow(ConfigFlow, domain=DOMAIN):
         return PowermeshOptionsFlow()
 
 
-class PowermeshOptionsFlow(OptionsFlow):
-    """Adjust which entities are transferred, the upload interval and the smoothing."""
+class PowermeshOptionsFlow(MonitorFlowMixin, OptionsFlow):
+    """Adjust monitoring, the local overview or the transferred entities."""
 
     def __init__(self) -> None:
         self._options: dict[str, Any] = {}
 
+    def _monitor_current(self) -> dict[str, Any]:
+        return dict(self.config_entry.options)
+
+    async def _async_finish_monitor(self, options: dict[str, Any]) -> ConfigFlowResult:
+        return self.async_create_entry(data=options)
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Show current selection, optionally reset to the dashboard suggestion."""
+        if self.config_entry.data.get(CONF_MODE) == MODE_MONITOR:
+            return await self.async_step_monitor(user_input)
         if self.config_entry.data.get(CONF_MODE) == MODE_LOCAL:
             return await self.async_step_local(user_input)
+        if disabled := _cloud_disabled(self):
+            return disabled
         suggestion, skipped = await async_suggestion(self.hass)
         placeholders = _describe(suggestion, skipped) | {"invalid": ""}
         errors: dict[str, str] = {}
@@ -681,6 +729,8 @@ class PowermeshOptionsFlow(OptionsFlow):
 
     async def async_step_smoothing(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Choose the smoothing per entity; new entities start with the default."""
+        if disabled := _cloud_disabled(self):
+            return disabled
         entities = self._options[CONF_ENTITIES]
         if user_input is not None:
             return self.async_create_entry(data=self._options | {CONF_SMOOTHING: _smoothing_choices(entities, user_input, self.hass)})

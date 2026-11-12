@@ -12,6 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import PowermeshConfigEntry
 from .const import CONF_ROLES, DOMAIN, STATUSES, VERSION
+from .monitor import AnomalyMonitor
 from .uploader import PowermeshUploader
 
 
@@ -20,6 +21,9 @@ async def async_setup_entry(
 ) -> None:
     """Create the diagnostic sensors."""
     uploader = entry.runtime_data
+    if isinstance(uploader, AnomalyMonitor):
+        async_add_entities([PowermeshFindingsSensor(uploader)])
+        return
     if uploader is None:
         async_add_entities([PowermeshOverviewSensor(entry)])
         return
@@ -49,6 +53,41 @@ class PowermeshOverviewSensor(SensorEntity):
             identifiers={(DOMAIN, entry.entry_id)}, name="Powermesh Energie",
             manufacturer="Powermesh", entry_type=DeviceEntryType.SERVICE, sw_version=VERSION,
         )
+
+
+def monitor_device(monitor: AnomalyMonitor) -> DeviceInfo:
+    """Return the shared service device of a monitoring entry."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, monitor.entry.entry_id)}, name="Powermesh Auffälligkeiten",
+        manufacturer="Powermesh", entry_type=DeviceEntryType.SERVICE, sw_version=VERSION,
+    )
+
+
+class PowermeshFindingsSensor(SensorEntity):
+    """Number of open findings, with local details for the dashboard card."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_translation_key = "findings"
+    _attr_icon = "mdi:alert-decagram-outline"
+    _unrecorded_attributes = frozenset({"findings", "monitors", "recent", "sensitivity"})
+
+    def __init__(self, monitor: AnomalyMonitor) -> None:
+        self._monitor = monitor
+        self._attr_unique_id = f"{monitor.entry.entry_id}_findings"
+        self._attr_device_info = monitor_device(monitor)
+
+    @property
+    def native_value(self) -> int:
+        return int(self._monitor.snapshot.get("active", 0))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        snapshot = self._monitor.snapshot
+        return {key: snapshot.get(key) for key in ("findings", "monitors", "recent", "sensitivity")}
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(self._monitor.add_listener(self.async_write_ha_state))
 
 
 class _PowermeshSensor(SensorEntity):

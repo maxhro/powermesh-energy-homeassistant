@@ -1,0 +1,7 @@
+acknowledge:
+  fields:
+    finding_id:
+      required: false
+      example: "deviation:sensor.washer_power:1767225600"
+      selector:
+        text:

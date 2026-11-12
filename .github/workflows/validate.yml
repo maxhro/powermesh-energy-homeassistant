@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   hacs:
+    name: Marketplace (HACS) validation
     runs-on: ubuntu-latest
     steps:
       - uses: hacs/action@main

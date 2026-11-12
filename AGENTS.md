@@ -2,7 +2,20 @@
 
 ## Current baseline
 
-- Version `0.8.0` (requires service API release `0.4.0`): selected numeric
+- Version `0.9.0` prototype: local anomaly monitoring (`monitor.py`,
+  `monitor_flow.py`). Owner-confirmed sensors (max 50) suggested from areas,
+  labels and devices: learned EWMA normal range for power/temperature/humidity,
+  counter glitch/decrease checks for `total_increasing` energy, no-data checks,
+  acknowledge service, persistent/notify-entity messages, findings sensor,
+  problem binary sensor and `powermesh-anomaly-card`. Bounded learning state
+  stays in private HA storage and is removed with the entry. No AI, no cloud,
+  no control, no savings promises.
+- The powermesh.de REST transfer is disabled via
+  `const.CLOUD_TRANSFER_ENABLED = False`, not deleted. Cloud setup/options/reauth
+  abort; existing cloud entries load without uploader, keep key and buffer and
+  show a repair issue. Retained cloud tests enable the flag via the
+  `cloud_transfer` fixture. When re-enabled it requires service API release
+  `0.4.0`: selected numeric
   sensor readings, optional allowlisted Home Assistant metadata, smoothing and
   bounded offline buffering for powermesh.de.
   New website-paired cloud entries use an explicit snapshot mode: one current
@@ -26,7 +39,8 @@
 
 ## Setup paths and trust boundary
 
-- Setup offers local-only sensor overview, an existing personal API key, the
+- Setup offers local anomaly monitoring and the local-only sensor overview.
+  Only with the cloud flag enabled: an existing personal API key, the
   current website pairing flow, and a legacy operator-issued invitation.
   Pairing uses a one-use 22-character code and a random 256-bit installation
   secret stored privately in HA; the code expires after 30 minutes and is not an
@@ -57,7 +71,11 @@
 - PowerShell 7: `pwsh -NoProfile -File ./build-package.ps1 -DryRun`;
   `-BuildPackage` creates a local manual-install ZIP without overwriting output.
   Packaging never publishes a release or connects to Home Assistant.
-- HACS and hassfest jobs in `.github/workflows/validate.yml` are required before
+- Since Home Assistant 2026.11 HACS is built in as **Marketplace** (Settings →
+  Marketplace, same catalog and `hacs.json`); document Marketplace first and
+  HACS for 2026.10 and older.
+- Marketplace/HACS (`hacs/action`) and hassfest jobs in
+  `.github/workflows/validate.yml` are required before
   merge/release. A skipped or unavailable validator is not proof of acceptance.
   Keep private cross-project compatibility checks aligned.
 

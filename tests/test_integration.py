@@ -37,6 +37,9 @@ from custom_components.powermesh_energy.const import (
 from custom_components.powermesh_energy.uploader import PowermeshUploader
 from .conftest import ENERGY
 
+# The retained powermesh.de transfer is disabled in the product; test it explicitly enabled.
+pytestmark = pytest.mark.usefixtures("cloud_transfer")
+
 API_KEY = "pme_" + "a" * 16 + "_" + "b" * 64
 KEY_ID = "a" * 16
 CONNECTION = {ENTRY_API_KEY: API_KEY}
@@ -62,7 +65,7 @@ def reading(value=1):
 async def start_key_flow(hass):
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     assert result["type"] is FlowResultType.MENU
-    assert result["menu_options"] == ["local", "api_key", "register_website", "register"]
+    assert result["menu_options"] == ["monitor", "local", "api_key", "register_website", "register"]
     return await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "api_key"})
 
 
@@ -111,7 +114,7 @@ async def test_local_entry_setup_options_diagnostics_and_removal(hass):
         assert resources.call_count == 1
     sensor = PowermeshOverviewSensor(entry)
     assert sensor.extra_state_attributes == {CONF_ROLES: {"solar_power": "sensor.solar"}}
-    assert await async_get_config_entry_diagnostics(hass, entry) == {"mode": "local", "integration_version": "0.8.0"}
+    assert await async_get_config_entry_diagnostics(hass, entry) == {"mode": "local", "integration_version": "0.9.0"}
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["step_id"] == "local"
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"grid_import_power": "sensor.solar"})

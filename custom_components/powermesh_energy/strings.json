@@ -3,8 +3,9 @@
     "step": {
       "user": {
         "title": "Powermesh Energy",
-        "description": "Use the energy overview locally without an account, or optionally connect to powermesh.de for selected reading uploads.",
+        "description": "Detect unusual behaviour and data problems of selected sensors locally in Home Assistant, or use the local energy overview. No account and no data transfer are required.",
         "menu_options": {
+          "monitor": "Detect anomalies locally",
           "local": "Use locally without an account",
           "api_key": "Use existing API key",
           "register_website": "Connect new account through website",
@@ -20,6 +21,23 @@
         "title": "Set up your powermesh.de account",
         "description": "Open {url}, enter the setup code, and set up your email address, password, email confirmation and authenticator. The code expires at Unix time {expires} and can only be used once. Then select “Completed” here. Home Assistant does not ask for account credentials or MFA secrets.",
         "data": {"complete": "Email and authenticator setup completed on the website", "restart": "Request a new pairing code and do not link this account"}
+      },
+      "monitor": {
+        "title": "Anomaly detection: structure",
+        "description": "Powermesh suggests suitable sensors from your areas, labels and devices: power, temperature and humidity get a learned normal range; energy meters are checked for jumps and decreases. Optionally limit the suggestions. All evaluation runs locally.",
+        "data": {"areas": "Areas", "labels": "Labels"},
+        "data_description": {"areas": "Empty: all areas.", "labels": "Empty: all labels."}
+      },
+      "monitor_select": {
+        "title": "Anomaly detection: sensors",
+        "description": "{count} suitable sensors found. Confirm up to {max} sensors; only confirmed sensors are evaluated.",
+        "data": {"monitors": "Monitored sensors"}
+      },
+      "monitor_settings": {
+        "title": "Anomaly detection: notifications",
+        "description": "Normal ranges are learned for at least 24 hours before deviations are reported. Deviations must last 10 minutes.",
+        "data": {"sensitivity": "Sensitivity", "notify_persistent": "Show Home Assistant notifications", "notify_entity": "Additional notify entity"},
+        "data_description": {"notify_entity": "Optional, e.g. a mobile app. The message contains sensor name, area and values."}
       },
       "local": {
         "title": "Local energy overview",
@@ -93,8 +111,11 @@
       "unknown": "Unexpected error.",
       "no_entities": "Select at least one entity.",
       "incompatible": "Select sensor entities only: {invalid}",
+      "no_candidates": "No suitable sensors found. Remove filters or check device class and unit of your sensors.",
+      "no_monitors": "Select at least one sensor.",
+      "too_many_monitors": "Select at most 50 sensors.",
       "api_incompatible": "The server version is not compatible with this version of the integration.",
-      "update_required": "Please update the integration (HACS) to connect to this server.",
+      "update_required": "Please update the integration (Settings → Marketplace, or HACS before Home Assistant 2026.11) to connect to this server.",
       "consent_missing": "Please confirm this statement explicitly.",
       "invalid_email": "Enter a valid email address.",
       "password_required": "Enter a password.",
@@ -116,7 +137,8 @@
       "already_configured": "This server is already configured.",
       "reauth_successful": "API key updated.",
       "registration_uncertain": "The registration outcome is unclear (for example a timeout or lost connection). The account may have been created; in that case the invitation code is used up and cannot be reused. Nothing is retried automatically. Sign in on powermesh.de with email address and password: if that works, complete email confirmation and authenticator setup in time, then create an API key and choose \"Use existing API key\". Otherwise ask the operator for a new code.",
-      "registration_incomplete": "The registration was not fully prepared. Please restart the setup."
+      "registration_incomplete": "The registration was not fully prepared. Please restart the setup.",
+      "cloud_transfer_disabled": "The transfer to powermesh.de is disabled in this version. Use local anomaly detection instead."
     },
     "create_entry": {
       "account_setup_required": "The account was created and the API key stored in Home Assistant. Setup is not complete yet: by {deadline}, sign in at {url} with email address and password, request and confirm the email link and set up the authenticator. Otherwise the account is blocked and deleted together with all stored data.\n\n{warning}",
@@ -125,6 +147,23 @@
   },
   "options": {
     "step": {
+      "monitor": {
+        "title": "Anomaly detection: structure",
+        "description": "Optionally limit the suggestions to areas and labels. Already monitored sensors stay selectable.",
+        "data": {"areas": "Areas", "labels": "Labels"},
+        "data_description": {"areas": "Empty: all areas.", "labels": "Empty: all labels."}
+      },
+      "monitor_select": {
+        "title": "Anomaly detection: sensors",
+        "description": "{count} suitable sensors found. Confirm up to {max} sensors; removed sensors lose their learned normal range.",
+        "data": {"monitors": "Monitored sensors"}
+      },
+      "monitor_settings": {
+        "title": "Anomaly detection: notifications",
+        "description": "Normal ranges are learned for at least 24 hours before deviations are reported. Deviations must last 10 minutes.",
+        "data": {"sensitivity": "Sensitivity", "notify_persistent": "Show Home Assistant notifications", "notify_entity": "Additional notify entity"},
+        "data_description": {"notify_entity": "Optional, e.g. a mobile app. The message contains sensor name, area and values."}
+      },
       "local": {
         "title": "Local energy overview",
         "description": "Change or remove selected sources. At least one source is required. No readings are transferred.",
@@ -153,7 +192,13 @@
       "duplicate_source": "Use separate sources for separate roles.",
       "snapshot_limit": "The new cloud snapshot setup supports at most 200 selected sensors.",
       "no_entities": "Select at least one entity.",
-      "incompatible": "Select sensor entities only: {invalid}"
+      "incompatible": "Select sensor entities only: {invalid}",
+      "no_candidates": "No suitable sensors found. Remove filters or check device class and unit of your sensors.",
+      "no_monitors": "Select at least one sensor.",
+      "too_many_monitors": "Select at most 50 sensors."
+    },
+    "abort": {
+      "cloud_transfer_disabled": "The transfer to powermesh.de is disabled in this version. Nothing is sent and stored data stays unchanged."
     }
   },
   "entity": {
@@ -179,6 +224,14 @@
       },
       "last_upload": {
         "name": "Last upload"
+      },
+      "findings": {
+        "name": "Open findings"
+      }
+    },
+    "binary_sensor": {
+      "problem": {
+        "name": "Anomaly"
       }
     }
   },
@@ -205,15 +258,19 @@
     },
     "update_required": {
       "title": "Powermesh Energie: update required",
-      "description": "The server no longer accepts version {installed} of the integration. Readings are kept locally. Update the integration in HACS and restart Home Assistant."
+      "description": "The server no longer accepts version {installed} of the integration. Readings are kept locally. Update the integration under Settings → Marketplace (HACS before Home Assistant 2026.11) and restart Home Assistant."
     },
     "api_incompatible": {
       "title": "Powermesh Energie: incompatible server",
-      "description": "Version {installed} of the integration does not support the server version ({server}). Readings are kept locally. Check for an integration update in HACS."
+      "description": "Version {installed} of the integration does not support the server version ({server}). Readings are kept locally. Check for an integration update under Settings → Marketplace (HACS before Home Assistant 2026.11)."
     },
     "update_available": {
       "title": "Powermesh Energie: update available",
-      "description": "Version {latest} of the integration is available (installed: {installed}). Update it in HACS."
+      "description": "Version {latest} of the integration is available (installed: {installed}). Update it under Settings → Marketplace (HACS before Home Assistant 2026.11)."
+    },
+    "cloud_transfer_disabled": {
+      "title": "Powermesh Energie: powermesh.de transfer disabled",
+      "description": "This version evaluates sensors only locally. The existing powermesh.de connection is kept but sends nothing; locally buffered readings and the stored API key stay unchanged. Remove the entry if you no longer need it, or set up local anomaly detection."
     },
     "account_setup_required": {
       "title": "powermesh.de: complete account setup",
@@ -228,7 +285,23 @@
       "description": "Registration issued an API key, but powermesh.de did not report a valid account status (protocol error), so no deadline is known. Complete setup at {url} as soon as possible: sign in with email address and password, request and confirm the email link and set up the authenticator. Accounts not set up within the registration deadline are blocked and deleted with all stored data. This notice disappears once powermesh.de reports the account status."
     }
   },
+  "services": {
+    "acknowledge": {
+      "name": "Acknowledge finding",
+      "description": "Acknowledges an anomaly finding. Without an ID, all open findings are acknowledged.",
+      "fields": {
+        "finding_id": {"name": "Finding ID", "description": "ID from the attributes of the findings sensor."}
+      }
+    }
+  },
   "selector": {
+    "sensitivity": {
+      "options": {
+        "low": "Low (only strong deviations)",
+        "medium": "Medium",
+        "high": "High (more findings)"
+      }
+    },
     "smoothing": {
       "options": {
         "mean_10s": "Mean over 10 seconds",

@@ -30,6 +30,9 @@ from custom_components.powermesh_energy.api import (
     start_pairing,
 )
 from custom_components.powermesh_energy.config_flow import REGISTRATION_ERRORS
+
+# The retained powermesh.de transfer is disabled in the product; test it explicitly enabled.
+pytestmark = pytest.mark.usefixtures("cloud_transfer")
 from custom_components.powermesh_energy.const import (
     API_RELEASE,
     CLIENT_ID,
@@ -99,7 +102,7 @@ async def register(session):
 
 def test_registration_targets_new_api_release():
     assert API_RELEASE == MIN_API_RELEASE == "0.4.0"
-    assert CLIENT_ID == "homeassistant/0.8.0"
+    assert CLIENT_ID == "homeassistant/0.9.0"
 
 
 async def test_register_sends_exact_fields_once_to_fixed_service_without_auth():
@@ -597,7 +600,7 @@ def test_translations_cover_registration_keys():
     for path in files:
         data = json.loads(path.read_text(encoding="utf-8"))
         config = data["config"]
-        assert set(config["step"]["user"]["menu_options"]) == {"local", "api_key", "register_website", "register"}
+        assert set(config["step"]["user"]["menu_options"]) == {"monitor", "local", "api_key", "register_website", "register"}
         assert set(config["step"]["register_website"]["data"]) == {"continue"}
         assert set(config["step"]["pairing"]["data"]) == {"complete", "restart"}
         assert set(config["step"]["register"]["data"]) == {"consent_privacy", "consent_terms", "consent_storage"}
