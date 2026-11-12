@@ -9,6 +9,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_API_KEY
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -23,9 +24,21 @@ from custom_components.powermesh_energy.const import (
     CONF_ENTITIES,
     CONF_SMOOTHING,
     API_RELEASE,
+    CONF_MODE,
+    MODE_LOCAL,
+    CONF_ROLES,
+    CARD_URL,
+    MODE_SNAPSHOT,
+    CONF_STORAGE_MODE,
+    CONF_PAIRING_LINKED,
+    PAIRING_STORE,
+    STORAGE_VERSION,
 )
 from custom_components.powermesh_energy.uploader import PowermeshUploader
 from .conftest import ENERGY
+
+# The retained powermesh.de transfer is disabled in the product; test it explicitly enabled.
+pytestmark = pytest.mark.usefixtures("cloud_transfer")
 
 API_KEY = "pme_" + "a" * 16 + "_" + "b" * 64
 KEY_ID = "a" * 16
@@ -52,8 +65,100 @@ def reading(value=1):
 async def start_key_flow(hass):
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     assert result["type"] is FlowResultType.MENU
-    assert result["menu_options"] == ["api_key", "register"]
+    assert result["menu_options"] == ["monitor", "local", "api_key", "register_website", "register"]
     return await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "api_key"})
+
+
+async def test_local_flow_validates_roles_without_network(hass):
+    hass.states.async_set("sensor.solar", "450", {"unit_of_measurement": "W"})
+    hass.states.async_set("sensor.battery", "60", {"unit_of_measurement": "%"})
+    hass.states.async_set("sensor.energy", "10", ENERGY)
+    with patch("custom_components.powermesh_energy.config_flow.PowermeshClient") as client:
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "local"})
+        assert result["step_id"] == "local"
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        assert result["errors"] == {"base": "no_entities"}
+        from homeassistant.data_entry_flow import InvalidData
+        from custom_components.powermesh_energy.config_flow import _local_errors
+        with pytest.raises(InvalidData):
+            await hass.config_entries.flow.async_configure(result["flow_id"], {"solar_power": "sensor.energy"})
+        assert _local_errors(hass, {"solar_power": "sensor.energy"}) == {"solar_power": "invalid_source"}
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"solar_power": "sensor.solar", "grid_import_power": "sensor.solar"})
+        assert result["errors"] == {"grid_import_power": "duplicate_source"}
+        with patch("custom_components.powermesh_energy.async_setup_entry", return_value=True):
+            result = await hass.config_entries.flow.async_configure(result["flow_id"], {"solar_power": "sensor.solar", "battery_soc": "sensor.battery"})
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        assert result["data"] == {CONF_MODE: MODE_LOCAL}
+        assert result["options"][CONF_ROLES] == {"solar_power": "sensor.solar", "battery_soc": "sensor.battery"}
+        client.assert_not_called()
+
+
+async def test_local_entry_setup_options_diagnostics_and_removal(hass):
+    from custom_components.powermesh_energy import async_remove_entry, async_setup_entry, async_unload_entry
+    from custom_components.powermesh_energy.diagnostics import async_get_config_entry_diagnostics
+    from custom_components.powermesh_energy.sensor import PowermeshOverviewSensor
+
+    hass.states.async_set("sensor.solar", "500", {"unit_of_measurement": "W"})
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_MODE: MODE_LOCAL}, options={CONF_ROLES: {"solar_power": "sensor.solar"}})
+    entry.add_to_hass(hass)
+    resources = AsyncMock()
+    with patch("custom_components.powermesh_energy.PowermeshClient") as client, patch.object(
+        hass.config_entries, "async_forward_entry_setups", AsyncMock()
+    ), patch.object(hass, "http", MagicMock(async_register_static_paths=resources)):
+        assert await async_setup_entry(hass, entry)
+        assert entry.runtime_data is None
+        client.assert_not_called()
+        assert resources.call_args.args[0][0].url_path == CARD_URL
+        await async_setup_entry(hass, entry)
+        assert resources.call_count == 1
+    sensor = PowermeshOverviewSensor(entry)
+    assert sensor.extra_state_attributes == {CONF_ROLES: {"solar_power": "sensor.solar"}}
+    assert await async_get_config_entry_diagnostics(hass, entry) == {"mode": "local", "integration_version": "0.9.0"}
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["step_id"] == "local"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"grid_import_power": "sensor.solar"})
+    assert result["data"] == {CONF_ROLES: {"grid_import_power": "sensor.solar"}}
+    with patch("homeassistant.helpers.storage.Store") as store:
+        await async_remove_entry(hass, entry)
+        store.assert_not_called()
+    with patch.object(hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)):
+        assert await async_unload_entry(hass, entry)
+
+
+async def test_pairing_installation_secret_is_removed_only_after_entry_setup(hass):
+    from custom_components.powermesh_energy import async_setup_entry
+
+    entry = MockConfigEntry(domain=DOMAIN, data={
+        ENTRY_API_KEY: API_KEY, CONF_STORAGE_MODE: MODE_SNAPSHOT, CONF_PAIRING_LINKED: True,
+    })
+    entry.add_to_hass(hass)
+    store = Store(hass, STORAGE_VERSION, PAIRING_STORE, private=True)
+    await store.async_save({"installation_secret": "c" * 64})
+    with patch("custom_components.powermesh_energy.PowermeshUploader.async_start", AsyncMock()), patch.object(
+        hass.config_entries, "async_forward_entry_setups", AsyncMock()
+    ):
+        assert await async_setup_entry(hass, entry)
+    assert await store.async_load() is None
+    assert entry.data[ENTRY_API_KEY] == API_KEY
+    assert CONF_PAIRING_LINKED not in entry.data
+
+
+async def test_local_card_resource_is_served_by_home_assistant(hass, hass_client):
+    from homeassistant.setup import async_setup_component
+    assert await async_setup_component(hass, "http", {"http": {}})
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_MODE: MODE_LOCAL}, options={CONF_ROLES: {"solar_power": "sensor.solar"}})
+    entry.add_to_hass(hass)
+    with patch("custom_components.powermesh_energy.PowermeshClient") as transport:
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        client = await hass_client()
+        response = await client.get(CARD_URL)
+        assert response.status == 200
+        assert 'customElements.define("powermesh-energy-card"' in await response.text()
+        transport.assert_not_called()
+        assert entry.runtime_data is None
+        assert await hass.config_entries.async_reload(entry.entry_id)
 
 
 def make_uploader(hass):
@@ -75,6 +180,31 @@ def make_uploader(hass):
     return uploader, client, entry
 
 
+async def test_snapshot_uploader_coalesces_state_changes_and_uses_snapshot_endpoint(hass):
+    uploader, client, _entry = make_uploader(hass)
+    uploader.snapshot_mode = True
+    first = reading(1)
+    second = reading(2)
+    second["timestamp"] = (dt_util.utcnow() + timedelta(seconds=1)).isoformat()
+    uploader._append(first)
+    uploader._append(second)
+    assert len(uploader._buffer) == 1
+    assert uploader._buffer[0]["state"] == 2
+    client.snapshot.return_value = UploadResult(1, 0)
+    await uploader._upload_batches()
+    client.snapshot.assert_awaited_once_with([second])
+    client.upload.assert_not_awaited()
+    assert uploader.pending == 0
+
+
+async def test_snapshot_uploader_preserves_sensor_measurement_time(hass):
+    uploader, _client, _entry = make_uploader(hass)
+    uploader.snapshot_mode = True
+    measured_at = (dt_util.utcnow() - timedelta(hours=1)).replace(microsecond=0)
+    uploader._record("sensor.grid_import", "10", ENERGY, measured_at)
+    assert dt_util.parse_datetime(uploader._buffer[0]["timestamp"]) == measured_at
+
+
 async def test_config_flow_and_smoothing(hass):
     hass.states.async_set("sensor.grid_import", "10", ENERGY)
     with patch("custom_components.powermesh_energy.config_flow.PowermeshClient") as client:
@@ -89,7 +219,7 @@ async def test_config_flow_and_smoothing(hass):
         with patch("custom_components.powermesh_energy.async_setup_entry", return_value=True):
             result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
         assert result["type"] is FlowResultType.CREATE_ENTRY
-        assert result["data"] == CONNECTION
+        assert result["data"] == CONNECTION | {CONF_STORAGE_MODE: MODE_SNAPSHOT}
         assert result["options"][CONF_SMOOTHING] == {"sensor.grid_import": "none"}
 
 
@@ -311,7 +441,7 @@ async def test_reauth_updates_credentials_without_removing_buffer(hass):
             result = await hass.config_entries.flow.async_configure(result["flow_id"], replacement)
         assert result["type"] is FlowResultType.ABORT
         assert result["reason"] == "reauth_successful"
-        assert entry.data == replacement
+        assert entry.data == replacement | {CONF_STORAGE_MODE: "readings"}
 
 
 async def test_diagnostics_redact_all_credentials_and_no_values(hass):

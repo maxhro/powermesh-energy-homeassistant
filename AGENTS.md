@@ -2,9 +2,26 @@
 
 ## Current baseline
 
-- Version `0.6.0` (requires service API release `0.3.0`): selected numeric
+- Version `0.9.0` prototype: local anomaly monitoring (`monitor.py`,
+  `monitor_flow.py`). Owner-confirmed sensors (max 50) suggested from areas,
+  labels and devices: learned EWMA normal range for power/temperature/humidity,
+  counter glitch/decrease checks for `total_increasing` energy, no-data checks,
+  acknowledge service, persistent/notify-entity messages, findings sensor,
+  problem binary sensor and `powermesh-anomaly-card`. Bounded learning state
+  stays in private HA storage and is removed with the entry. No AI, no cloud,
+  no control, no savings promises.
+- The powermesh.de REST transfer is disabled via
+  `const.CLOUD_TRANSFER_ENABLED = False`, not deleted. Cloud setup/options/reauth
+  abort; existing cloud entries load without uploader, keep key and buffer and
+  show a repair issue. Retained cloud tests enable the flag via the
+  `cloud_transfer` fixture. When re-enabled it requires service API release
+  `0.4.0`: selected numeric
   sensor readings, optional allowlisted Home Assistant metadata, smoothing and
   bounded offline buffering for powermesh.de.
+  New website-paired cloud entries use an explicit snapshot mode: one current
+  state per selected entity, coalesced locally and bounded to 200 entities;
+  existing entries and operator-invitation fallback retain raw history mode.
+  Snapshots are storage only, not a website display or analysis feature.
   Smart-home comparison and improvement potential are **in Entwicklung**,
   not implemented. Do not add analysis, exports, control or data sharing.
 - Keep `manifest.json` and `const.py` versions aligned. Website, service and
@@ -22,22 +39,23 @@
 
 ## Setup paths and trust boundary
 
-- Setup offers an existing personal API key or a new account with an
-  operator-issued invitation (24-hour, single-use bearer authorization, not
-  proof of an official client). Existing accounts are rejected by the service.
-- Privacy, terms and storage consent are separate explicit confirmations with
-  the current consent versions. Entities and smoothing are chosen before the
-  single registration request; the issued key is stored at once. Never retry
-  registration automatically, never retrieve keys another way; ambiguous
-  outcomes abort with a warning that the invitation may be consumed.
-- Email, password and invitation are sent only via HTTPS to the fixed service and
-  never persisted in entries, storage, logs, diagnostics or issues.
-- Website email confirmation and TOTP enrollment must finish within 168 hours.
-  Show the deadline immediately and keep a persistent repair issue until the
-  service reports `setup_required: false`; expired accounts stay visible as an
-  auth problem with no automatic re-registration or key issuance. The service
-  rejects expired keys with its ordinary auth error, so expiry is derived from the
-  remembered server deadline; do not invent dedicated error codes.
+- Setup offers local anomaly monitoring and the local-only sensor overview.
+  Only with the cloud flag enabled: an existing personal API key, the
+  current website pairing flow, and a legacy operator-issued invitation.
+  Pairing uses a one-use 22-character code and a random 256-bit installation
+  secret stored privately in HA; the code expires after 30 minutes and is not an
+  API key or proof of official HA software. Existing accounts are never attached.
+- The website collects email/password, privacy/terms and separate storage
+  consent. HA must never collect website passwords, email addresses, TOTP
+  secrets/codes or consent on the website's behalf. Claim the API key only after
+  website email verification and TOTP setup complete. Keep the pairing secret
+  until successful claim for safe idempotent retries, then remove it. Never log
+  the secret/code or auto-retry a claim in the background. Preserve buffered
+  readings on key changes/removal.
+- The server setup deadline is `HA_ACCOUNT_SETUP_DAYS` (default 7; operator
+  range 1–365). Incomplete accounts are blocked at expiry and deleted by the
+  hourly website maintenance job. The current website-pairing flow has no API
+  key or upload buffer before setup and consent complete; do not invent auth errors.
 - A registration response with a valid key but malformed account status keeps
   the key and shows a persistent protocol-error issue without a fabricated
   deadline until the service reports the account status.
@@ -53,7 +71,11 @@
 - PowerShell 7: `pwsh -NoProfile -File ./build-package.ps1 -DryRun`;
   `-BuildPackage` creates a local manual-install ZIP without overwriting output.
   Packaging never publishes a release or connects to Home Assistant.
-- HACS and hassfest jobs in `.github/workflows/validate.yml` are required before
+- Since Home Assistant 2026.11 HACS is built in as **Marketplace** (Settings →
+  Marketplace, same catalog and `hacs.json`); document Marketplace first and
+  HACS for 2026.10 and older.
+- Marketplace/HACS (`hacs/action`) and hassfest jobs in
+  `.github/workflows/validate.yml` are required before
   merge/release. A skipped or unavailable validator is not proof of acceptance.
   Keep private cross-project compatibility checks aligned.
 

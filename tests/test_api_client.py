@@ -118,7 +118,7 @@ async def test_status_uses_fixed_tls_service_and_client_header():
     assert args == ("GET", "https://api.powermesh.de/api/v2/status")
     assert kwargs["allow_redirects"] is False
     assert kwargs["headers"]["Authorization"] == f"Bearer {API_KEY}"
-    assert kwargs["headers"]["X-Powermesh-Client"] == CLIENT_ID == "homeassistant/0.7.1"
+    assert kwargs["headers"]["X-Powermesh-Client"] == CLIENT_ID == "homeassistant/0.9.0"
 
 
 async def test_status_rejects_mismatched_api_version_header():
@@ -145,6 +145,20 @@ async def test_upload_requires_exact_storage_acknowledgement():
     assert args == ("POST", "https://api.powermesh.de/api/v2/readings")
     assert kwargs["data"] == encode_request({"readings": [reading]})
     assert kwargs["headers"]["Content-Type"] == "application/json"
+
+
+async def test_snapshot_uses_private_current_state_route_and_exact_acknowledgement():
+    reading = {
+        "entity_id": "sensor.power",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "state": 10,
+        "unit_of_measurement": "W",
+    }
+    client, session = api_client(FakeResponse(body={"accepted": 1, "duplicates": 0}))
+    assert await client.snapshot([reading]) == UploadResult(1, 0)
+    args, kwargs = session.calls[0]
+    assert args == ("POST", "https://api.powermesh.de/api/v2/snapshot")
+    assert kwargs["data"] == encode_request({"readings": [reading]})
 
 
 @pytest.mark.parametrize(

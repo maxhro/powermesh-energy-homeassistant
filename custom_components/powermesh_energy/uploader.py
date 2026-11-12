@@ -40,6 +40,8 @@ from .const import (
     CONF_SETUP_EXPIRES_AT,
     CONF_SMOOTHING,
     CONF_UPLOAD_INTERVAL,
+    CONF_STORAGE_MODE,
+    MODE_SNAPSHOT,
     DEFAULT_UPLOAD_INTERVAL,
     DOMAIN,
     INTERVAL_MAP,
@@ -103,6 +105,7 @@ class PowermeshUploader:
         self.hass = hass
         self.entry = entry
         self.client = client
+        self.snapshot_mode = entry.data.get(CONF_STORAGE_MODE) == MODE_SNAPSHOT
         self.entities: list[str] = list(entry.options.get(CONF_ENTITIES, []))
         choices = entry.options.get(CONF_SMOOTHING)
         self.smoothing: dict[str, str] = {
@@ -442,8 +445,8 @@ class PowermeshUploader:
 
     @callback
     def _append(self, reading: dict[str, Any]) -> None:
-        # Newer values within the same second replace older ones.
-        key = (reading["entity_id"], reading["timestamp"])
+        # Snapshot mode keeps only the newest pending state for each entity.
+        key = (reading["entity_id"], "snapshot") if self.snapshot_mode else (reading["entity_id"], reading["timestamp"])
         if self.buffer_limit is not None and (position := self._index.get(key)) is not None:
             self._buffer[position] = reading
             return
@@ -478,7 +481,10 @@ class PowermeshUploader:
 
     def _replace_buffer(self, readings: list[dict[str, Any]]) -> None:
         self._buffer = readings
-        self._index = {(r["entity_id"], r["timestamp"]): i for i, r in enumerate(readings)}
+        self._index = {
+            (r["entity_id"], "snapshot") if self.snapshot_mode else (r["entity_id"], r["timestamp"]): i
+            for i, r in enumerate(readings)
+        }
 
     @callback
     def _record(self, entity_id: str, state: str, attributes: Any, when: datetime) -> None:
@@ -594,7 +600,7 @@ class PowermeshUploader:
             batch = self._inflight["readings"]
             await self._store.async_save(self._data())
             try:
-                result = await self.client.upload(batch)
+                result = await (self.client.snapshot(batch) if self.snapshot_mode else self.client.upload(batch))
             except PowermeshConnectionError as err:
                 self._retry_at = dt_util.utcnow() + timedelta(seconds=30 + random.uniform(0, 10))
                 self._set_error(STATUS_OFFLINE, err.code)

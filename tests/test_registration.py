@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
+import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import issue_registry as ir
@@ -20,23 +21,34 @@ from custom_components.powermesh_energy.api import (
     PowermeshClient,
     PowermeshConnectionError,
     PowermeshRegistrationError,
+    Pairing,
     Registration,
     UploadResult,
+    claim_pairing,
     parse_account,
     register_account,
+    start_pairing,
 )
 from custom_components.powermesh_energy.config_flow import REGISTRATION_ERRORS
+
+# The retained powermesh.de transfer is disabled in the product; test it explicitly enabled.
+pytestmark = pytest.mark.usefixtures("cloud_transfer")
 from custom_components.powermesh_energy.const import (
     API_RELEASE,
     CLIENT_ID,
     CONF_ACCOUNT_STATUS_UNKNOWN,
     CONF_API_KEY,
+    CONF_PAIRING_LINKED,
     CONF_ENTITIES,
     CONF_SETUP_EXPIRES_AT,
     CONF_SMOOTHING,
+    CONF_STORAGE_MODE,
     DOMAIN,
     MIN_API_RELEASE,
+    MODE_READINGS,
+    MODE_SNAPSHOT,
     REST_BUFFER_FORMAT,
+    REGISTRATION_CONSENT_VERSION,
 )
 from custom_components.powermesh_energy.uploader import PowermeshUploader
 from .conftest import ENERGY
@@ -89,8 +101,8 @@ async def register(session):
 
 
 def test_registration_targets_new_api_release():
-    assert API_RELEASE == MIN_API_RELEASE == "0.3.0"
-    assert CLIENT_ID == "homeassistant/0.7.1"
+    assert API_RELEASE == MIN_API_RELEASE == "0.4.0"
+    assert CLIENT_ID == "homeassistant/0.9.0"
 
 
 async def test_register_sends_exact_fields_once_to_fixed_service_without_auth():
@@ -107,7 +119,7 @@ async def test_register_sends_exact_fields_once_to_fixed_service_without_auth():
         "email": EMAIL,
         "password": PASSWORD,
         "invitation_code": INVITATION,
-        "consent_version": "2026-10-27-ha-registration-v1",
+        "consent_version": REGISTRATION_CONSENT_VERSION,
         "consent_privacy": True,
         "consent_terms": True,
         "energy_consent_version": "2026-10-26-rest-metadata-0.1.0",
@@ -116,6 +128,48 @@ async def test_register_sends_exact_fields_once_to_fixed_service_without_auth():
     assert result.api_key == API_KEY
     assert result.account == AccountState(True, expires, WARNING)
     assert "b" * 64 not in repr(result)
+
+
+async def test_pairing_start_and_claim_use_local_secret_and_wait_for_website_mfa():
+    secret = "c" * 64
+    code = "AbCdEf0123456789_-AbCd"
+    expiry = future(1800)
+    session = FakeSession(FakeResponse(status=201, body={
+        "status": "ok", "api_release": API_RELEASE,
+        "pairing_code": code, "expires_at": expiry,
+    }))
+    pairing = await start_pairing(session, secret)
+    assert (pairing.code, pairing.expires_at) == (code, expiry)
+    args, kwargs = session.calls[0]
+    assert args == ("POST", "https://api.powermesh.de/api/v2/register")
+    assert json.loads(kwargs["data"]) == {"action": "start", "installation_secret": secret}
+    assert "Authorization" not in kwargs["headers"]
+    assert "installation_secret" not in repr(pairing)
+
+    pending = FakeSession(FakeResponse(body={"status": "pending", "api_release": API_RELEASE}))
+    assert await claim_pairing(pending, secret) is None
+    claimed = FakeSession(FakeResponse(body={
+        "status": "ok", "api_release": API_RELEASE, "api_key": API_KEY,
+        "account": {"setup_required": False, "setup_expires_at": None, "warning": None},
+    }))
+    result = await claim_pairing(claimed, secret)
+    assert result == Registration(API_KEY, AccountState(False))
+    assert json.loads(claimed.calls[0][1]["data"]) == {"action": "claim", "installation_secret": secret}
+
+
+async def test_pairing_rejects_wrong_release_and_surfaces_operator_gate():
+    secret = "d" * 64
+    outdated = FakeSession(FakeResponse(body={
+        "status": "ok", "api_release": "0.3.0", "pairing_code": "A" * 22, "expires_at": future(),
+    }))
+    outdated.response.headers["X-Powermesh-Api-Version"] = "0.3.0"
+    with pytest.raises(PowermeshRegistrationError) as caught:
+        await start_pairing(outdated, secret)
+    assert caught.value.code == "update_required"
+    closed = FakeSession(FakeResponse(status=403, body={"error": {"code": "registration_unavailable"}}))
+    with pytest.raises(PowermeshRegistrationError) as caught:
+        await start_pairing(closed, secret)
+    assert caught.value.code == "registration_unavailable"
 
 
 async def test_register_keeps_issued_key_when_account_block_is_malformed():
@@ -276,7 +330,7 @@ async def test_registration_success_creates_entry_once_without_credentials(hass,
     assert call.await_count == 1
     assert call.await_args.kwargs == {"email": EMAIL, "password": PASSWORD, "invitation_code": INVITATION}
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == {CONF_API_KEY: API_KEY, CONF_SETUP_EXPIRES_AT: expires}
+    assert result["data"] == {CONF_API_KEY: API_KEY, CONF_SETUP_EXPIRES_AT: expires, CONF_STORAGE_MODE: MODE_READINGS}
     assert result["options"][CONF_ENTITIES] == ["sensor.grid_import"]
     assert result["options"][CONF_SMOOTHING] == {"sensor.grid_import": "none"}
     assert result["description"] == "account_setup_required"
@@ -288,6 +342,42 @@ async def test_registration_success_creates_entry_once_without_credentials(hass,
     for secret in (EMAIL, PASSWORD, INVITATION):
         assert secret not in stored
     assert not hass.config_entries.flow.async_progress()
+
+
+async def test_website_pairing_flow_never_collects_account_credentials_in_ha(hass):
+    hass.states.async_set("sensor.grid_import", "10", ENERGY)
+    expiry = future(1800)
+    registration = Registration(API_KEY, AccountState(False))
+    with patch("custom_components.powermesh_energy.config_flow.start_pairing", AsyncMock(return_value=Pairing(INVITATION, expiry))) as start, patch(
+        "custom_components.powermesh_energy.config_flow.claim_pairing", AsyncMock(side_effect=[None, registration])
+    ) as claim:
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "register_website"})
+        assert result["step_id"] == "register_website"
+        assert set(result["data_schema"].schema) == {vol.Required("continue", default=False)}
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"continue": True})
+        assert result["step_id"] == "entities"
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_ENTITIES: ["sensor.grid_import"]})
+        assert result["step_id"] == "smoothing"
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        assert result["step_id"] == "pairing"
+        assert result["description_placeholders"]["code"] == INVITATION
+        assert result["description_placeholders"]["url"] == "https://powermesh.de/?r=register&ha=1"
+        assert {str(key) for key in result["data_schema"].schema} == {"complete"}
+        pending = await hass.config_entries.flow.async_configure(result["flow_id"], {"complete": True})
+        assert pending["step_id"] == "pairing"
+        assert pending["errors"] == {"base": "pairing_pending"}
+        with patch("custom_components.powermesh_energy.async_setup_entry", return_value=True):
+            created = await hass.config_entries.flow.async_configure(pending["flow_id"], {"complete": True})
+        assert created["type"] is FlowResultType.CREATE_ENTRY
+        assert created["data"] == {
+            CONF_API_KEY: API_KEY, CONF_STORAGE_MODE: MODE_SNAPSHOT, CONF_PAIRING_LINKED: True,
+        }
+        assert created["description"] is None
+        assert start.await_count == 1 and claim.await_count == 2
+        assert claim.await_args.kwargs == {}
+        assert claim.await_args.args[1] == start.await_args.args[1]
+        assert not hass.config_entries.flow.async_progress()
 
 
 @pytest.mark.parametrize("code", sorted(REGISTRATION_ERRORS))
@@ -458,7 +548,7 @@ async def test_malformed_registration_status_keeps_key_and_reports_protocol_erro
             result = await hass.config_entries.flow.async_configure(result["flow_id"], ACCOUNT_INPUT)
     assert call.await_count == 1
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == {CONF_API_KEY: API_KEY, CONF_ACCOUNT_STATUS_UNKNOWN: True}
+    assert result["data"] == {CONF_API_KEY: API_KEY, CONF_ACCOUNT_STATUS_UNKNOWN: True, CONF_STORAGE_MODE: MODE_READINGS}
     assert result["description"] == "account_status_unknown"
     assert "deadline" not in result["description_placeholders"]
     stored = str(result) + caplog.text
@@ -510,12 +600,15 @@ def test_translations_cover_registration_keys():
     for path in files:
         data = json.loads(path.read_text(encoding="utf-8"))
         config = data["config"]
-        assert set(config["step"]["user"]["menu_options"]) == {"api_key", "register"}
+        assert set(config["step"]["user"]["menu_options"]) == {"monitor", "local", "api_key", "register_website", "register"}
+        assert set(config["step"]["register_website"]["data"]) == {"continue"}
+        assert set(config["step"]["pairing"]["data"]) == {"complete", "restart"}
         assert set(config["step"]["register"]["data"]) == {"consent_privacy", "consent_terms", "consent_storage"}
         assert set(config["step"]["register_account"]["data"]) == set(ACCOUNT_INPUT)
         for code in REGISTRATION_ERRORS | {
             "consent_missing", "invalid_email", "password_required", "password_mismatch",
             "invitation_required", "registration_in_progress",
+            "pairing_pending",
         }:
             assert code in config["error"], (path, code)
         assert {"registration_uncertain", "registration_incomplete"} <= set(config["abort"])

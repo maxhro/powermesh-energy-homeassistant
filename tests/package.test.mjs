@@ -15,10 +15,11 @@ function fixture(t) {
   t.after(() => rmSync(work, { recursive: true }));
   copyFileSync(join(root, 'build-package.ps1'), join(work, 'build-package.ps1'));
   for (const [name, content] of Object.entries({
-    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.7.1"}',
-    [`${component}/const.py`]: 'VERSION: Final = "0.7.1"\n',
+    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.0"}',
+    [`${component}/const.py`]: 'VERSION: Final = "0.9.0"\n',
     [`${component}/__init__.py`]: '',
     [`${component}/translations/de.json`]: '{}',
+    [`${component}/frontend/powermesh-energy-card.js`]: 'export const synthetic = true;',
     [`${component}/__pycache__/cached.py`]: 'never package',
     [`${component}/.env`]: 'never package',
     '.env': 'SYNTHETIC_NEVER_READ=1',
@@ -59,9 +60,9 @@ test('manual-install ZIP includes exactly component sources and license without 
   assert.equal(existsSync(join(work, 'dist')), false);
   const built = run(work, '-BuildPackage');
   assert.equal(built.status, 0, built.stderr);
-  const path = join(work, 'dist/powermesh-energy-homeassistant-0.7.1.zip');
+  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.0.zip');
   assert.deepEqual(zipNames(path), [
-    `${component}/__init__.py`, `${component}/const.py`, `${component}/manifest.json`,
+    `${component}/__init__.py`, `${component}/const.py`, `${component}/frontend/powermesh-energy-card.js`, `${component}/manifest.json`,
     `${component}/translations/de.json`, 'LICENSE',
   ]);
   const original = readFileSync(path);
@@ -73,7 +74,11 @@ test('version drift, JSON secret files and links are rejected before output', (t
   const work = fixture(t);
   writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "1.0.0"\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
-  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.7.1"\n');
+  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.0"\n');
+  const yaml = join(work, component, 'secrets.yaml');
+  writeFileSync(yaml, 'token: SYNTHETIC_NEVER\n');
+  assert.notEqual(run(work, '-BuildPackage').status, 0);
+  rmSync(yaml);
   const secret = join(work, component, 'secrets.json');
   writeFileSync(secret, '{}');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
@@ -85,4 +90,48 @@ test('version drift, JSON secret files and links are rejected before output', (t
   symlinkSync(join(work, 'LICENSE'), join(work, component, 'unsafe.py'));
   assert.notEqual(run(work, '-BuildPackage').status, 0);
   assert.equal(existsSync(join(work, 'dist')), false);
+});
+
+globalThis.HTMLElement = class {};
+globalThis.customElements = { get: () => undefined, define: () => {} };
+globalThis.window = { customCards: [] };
+const cardSource = readFileSync(join(root, component, 'frontend/powermesh-energy-card.js'), 'utf8');
+const { sourceValue, bandGeometry } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
+const now = Date.parse('2026-11-05T12:00:00Z');
+const source = (value, unit = 'W', stamp = '2026-11-05T12:00:00Z') => ({
+  state: value, attributes: { unit_of_measurement: unit }, last_updated: stamp,
+});
+
+test('local energy widget converts units and identifies missing, invalid, signed and stale sources', () => {
+  assert.deepEqual(sourceValue(source('1.5', 'kW'), 'solar_power', now), {
+    value: 1.5, unit: 'kW', status: 'Gerade aktualisiert', stale: false,
+  });
+  assert.equal(sourceValue(source('0'), 'grid_import_power', now).value, 0);
+  assert.equal(sourceValue(source('85', '%'), 'battery_soc', now).value, 85);
+  for (const value of ['unknown', 'unavailable', 'NaN', 'Infinity', '', '0x10']) {
+    assert.equal(sourceValue(source(value), 'solar_power', now).value, null);
+  }
+  assert.equal(sourceValue(undefined, 'solar_power', now).value, null);
+  assert.equal(sourceValue(source('-50'), 'grid_import_power', now).status, 'Richtung prüfen');
+  assert.equal(sourceValue(source('101', '%'), 'battery_soc', now).value, null);
+  assert.equal(sourceValue(source('10', 'kWh'), 'solar_power', now).status, 'Einheit prüfen');
+  assert.equal(sourceValue(source('1e308', 'kW'), 'solar_power', now).value, null);
+  assert.equal(sourceValue(source('10', 'W', '2026-11-05T12:05:00Z'), 'solar_power', now).value, null);
+  assert.equal(sourceValue(source('10', 'W', 'invalid'), 'solar_power', now).value, null);
+  const stale = sourceValue(source('10', 'W', '2026-11-05T11:45:00Z'), 'solar_power', now);
+  assert.equal(stale.value, 10);
+  assert.equal(stale.stale, true);
+  assert.match(stale.status, /Veraltet/);
+});
+
+test('anomaly widget positions the learned band and flags values outside it', () => {
+  const inside = bandGeometry(100, 80, 120);
+  assert.deepEqual(inside, { bandStart: 25, bandEnd: 75, marker: 50, outside: false });
+  const above = bandGeometry(200, 80, 120);
+  assert.equal(above.outside, true);
+  assert.equal(above.marker, 100);
+  assert.ok(above.bandEnd < above.marker);
+  assert.equal(bandGeometry(Number.NaN, 80, 120).marker, null);
+  assert.equal(bandGeometry(100, 120, 80), null);
+  assert.equal(bandGeometry(100, undefined, 80), null);
 });

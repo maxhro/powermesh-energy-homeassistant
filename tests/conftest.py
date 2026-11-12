@@ -15,3 +15,10 @@ GAS = {"unit_of_measurement": "m³", "device_class": "gas", "state_class": "tota
 def auto_enable_custom_integrations(enable_custom_integrations):
     """Allow loading custom_components/powermesh_energy."""
     yield
+
+
+@pytest.fixture
+def cloud_transfer(monkeypatch):
+    """Re-enable the disabled powermesh.de transfer for its retained tests."""
+    monkeypatch.setattr("custom_components.powermesh_energy.const.CLOUD_TRANSFER_ENABLED", True)
+    yield

@@ -1,153 +1,162 @@
 # Powermesh Energie – Home Assistant Integration (Prototyp)
 
-Verbindet Home Assistant mit [powermesh.de](https://powermesh.de).
+Lokale Erkennung von Auffälligkeiten für Home Assistant: Powermesh schlägt
+anhand deiner Bereiche, Labels und Geräte passende Sensoren vor, lernt deren
+Normalbereich und meldet ungewöhnliches Verhalten oder Datenprobleme – direkt
+in Home Assistant, ohne Konto und ohne Datenübertragung.
 
-> **Status: Prototyp.** Die Integration und powermesh.de befinden sich in Entwicklung.
-> Sie ist nicht offiziell Teil von Home Assistant oder HACS.
+> **Status: Prototyp.** Die Integration befindet sich in Entwicklung und kann
+> sich noch ändern. Sie ist nicht offiziell Teil von Home Assistant und wird
+> nicht vom Home-Assistant-Projekt geprüft.
 
-## Wozu?
+## Funktionen
 
-Ein Vergleich von Smarthomes und die Ableitung von Verbesserungspotenzial befinden
-sich in Entwicklung und sind nicht implementiert. Derzeit speichert Powermesh
-ausschließlich die von dir freigegebenen Sensorwerte; es gibt keine Auswertung oder
-Anzeige der Messwerte.
+- **Sensorvorschläge aus deiner Struktur:** Passende Sensoren werden anhand von
+  Bereichen, Labels und Geräten vorgeschlagen. Überwacht wird nur, was du
+  bestätigst (höchstens 50 Sensoren).
+- **Gelernter Normalbereich:** Leistung (W/kW/MW), Temperatur und Luftfeuchte
+  erhalten nach mindestens 24 Stunden Lernzeit einen Normalbereich. Hält eine
+  Abweichung 10 Minuten an, entsteht eine Meldung; kurze Spitzen werden ignoriert.
+- **Zählerprüfung:** Energiezähler (`total_increasing`) werden auf kurzzeitige
+  Rücksprünge (typische Ursache für Spitzen in der Energiestatistik) und auf
+  dauerhaft gesunkene Zählerstände geprüft. Ein Rücksetzen auf (nahezu) null gilt
+  als normaler Zählerneustart.
+- **Datenausfall:** Liefert ein Sensor 30 Minuten keine gültigen Werte, wird
+  das gemeldet.
+- **Benachrichtigung und Bestätigung:** Meldungen erscheinen als
+  Home-Assistant-Benachrichtigung und optional über eine
+  Benachrichtigungs-Entität (z. B. Mobile App), höchstens alle 6 Stunden je
+  Sensor und Art. Bestätigte Abweichungen lassen den Normalbereich weiterlernen.
+- **Entitäten für Automationen:** Sensor **Offene Auffälligkeiten** und
+  Binärsensor **Auffälligkeit** (Problem).
+- **Dashboard-Karten:** „Powermesh Auffälligkeiten“ mit offenen Meldungen,
+  Normalbereichen und Lernfortschritt sowie die lokale **Energieübersicht**
+  (Solarleistung, Netzbezug, Einspeisung, Akkustand).
+
+Die Erkennung ist eine Plausibilitätsprüfung und keine Diagnose. Sie verspricht
+keine Einsparungen und steuert keine Geräte.
 
 ## Deine Daten
 
-Übertragen werden Sensor-Kennung, Zeitpunkt, Zahlenwert und Einheit. Zusätzlich
-können Home-Assistant-Metadaten wie Anzeigename, Geräte- und Zustandsklasse, Bereich,
-Etage, Labels und Gerätekennung gespeichert werden. Diese Angaben können Rückschlüsse
-auf deinen Haushalt ermöglichen.
+Die Integration überträgt keine Daten an powermesh.de oder andere Dienste und
+verwendet keine KI-Funktionen.
 
-Die Messwerte und Metadaten werden pseudonym deinem Benutzerkonto zugeordnet und bis
-zum Ende der Aufbewahrungsfrist gespeichert. Sie werden nicht verkauft oder an Dritte
-weitergegeben. Du kannst deine Einwilligung jederzeit widerrufen; dann werden alle
-API-Schlüssel gesperrt und alle gespeicherten Messwerte einschließlich Metadaten
-gelöscht.
+- **Auffälligkeiten:** Gespeichert werden je bestätigtem Sensor nur ein kompakter
+  Lernstand (gleitender Mittelwert, typische Abweichung, letzte Werte) und bis zu
+  20 beendete Meldungen in der geschützten `.storage`-Ablage von Home Assistant.
+  Beim Entfernen des Eintrags wird dieser Lernstand gelöscht. Diagnosedaten
+  enthalten nur Anzahlen, keine Werte oder Sensornamen.
+- **Benachrichtigungen** enthalten Sensorname, Bereich und Werte. Wählst du eine
+  Benachrichtigungs-Entität, gelten deren Zustellweg und Bedingungen.
+- **Energieübersicht:** Gespeichert werden nur die ausgewählten
+  Sensorreferenzen; die Karte liest aktuelle HA-Zustände.
 
-Bei einer Registrierung aus Home Assistant werden E-Mail-Adresse, Passwort und
-Einladungscode nur für das Anlegen des Kontos an powermesh.de übermittelt und
-nicht in Home Assistant gespeichert. Gespeichert wird lokal der persönliche
-API-Schlüssel, wie bei der Einrichtung mit einem vorhandenen Schlüssel.
+Die vorhandene HA-Recorder-Aufbewahrung und Zugriffsrechte bleiben unverändert.
+Hast du mit einer älteren Version eine Verbindung zu powermesh.de eingerichtet,
+bleibt dieser Eintrag mit API-Schlüssel und lokal gepufferten Werten erhalten,
+sendet aber nichts; eine Reparaturmeldung weist darauf hin. Entferne den Eintrag,
+wenn du ihn nicht mehr brauchst.
 
-## Installation über HACS
+## Installation über den Marketplace
 
-[![In HACS öffnen](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=maxhro&repository=powermesh-energy-homeassistant&category=integration)
+Seit Home Assistant 2026.11 ist der Community-Store als **Marketplace** in
+Home Assistant enthalten (bisher HACS). Er verwendet denselben Katalog.
 
-Der Button öffnet das Repository direkt in deinem HACS. Alternativ von Hand:
+[![Im Marketplace öffnen](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=maxhro&repository=powermesh-energy-homeassistant&category=integration)
 
-1. HACS öffnen → Menü (⋮) → **Benutzerdefinierte Repositories**
-2. Repository `https://github.com/maxhro/powermesh-energy-homeassistant`,
-   Typ **Integration** → Hinzufügen
-3. „Powermesh Energie“ herunterladen und Home Assistant neu starten
+Der Button öffnet das Repository im Marketplace (bzw. in HACS). Alternativ von Hand:
+
+1. **Einstellungen → Marketplace** öffnen (Administratorrechte erforderlich).
+2. **Aus Link hinzufügen** wählen und
+   `https://github.com/maxhro/powermesh-energy-homeassistant` als Typ
+   **Integration** eintragen (dafür muss der Marketplace mit GitHub verbunden sein).
+3. „Powermesh Energie“ herunterladen und Home Assistant neu starten.
 4. **Einstellungen → Geräte & Dienste → Integration hinzufügen → Powermesh Energie**
 
-Voraussetzung: Home Assistant 2026.10.4
-(getesteter Stand) oder neuer und entweder ein Konto auf powermesh.de mit
-persönlichem API-Schlüssel oder ein Einladungscode für ein neues Konto.
-Das Integrations-Icon zeigt Home Assistant ab Version 2026.3 an.
+Home Assistant bis 2026.10: HACS öffnen → Menü (⋮) → **Benutzerdefinierte
+Repositories** → Repository wie oben als **Integration** hinzufügen, dann
+Schritte 3 und 4.
+
+Voraussetzung: Home Assistant 2026.10.4 (getesteter Stand) oder neuer und Sensoren
+mit passender Geräteklasse und Einheit. Ein Konto oder API-Schlüssel ist nicht
+nötig. Das Integrations-Icon zeigt Home Assistant ab Version 2026.3 an.
 
 ## Einrichtung
 
-Beim Hinzufügen der Integration wählst du einen von zwei Wegen. Andere
-Home-Assistant-Integrationen und lokale Broker-Einstellungen werden davon nicht
-geändert. Für beide Wege gelten die
-[Nutzungsbedingungen von powermesh.de](https://powermesh.de/?r=terms).
+Beim Hinzufügen der Integration wählst du **Auffälligkeiten lokal erkennen**
+oder **Lokal ohne Konto nutzen** (Energieübersicht). Andere
+Home-Assistant-Integrationen werden davon nicht geändert.
 
-### Vorhandenen API-Schlüssel verwenden
+### Auffälligkeiten lokal erkennen
 
-1. Auf powermesh.de anmelden, die Informationen zur Speicherung prüfen, die
-   Einwilligung erteilen und einen persönlichen API-Schlüssel erstellen.
-2. In Home Assistant **Vorhandenen API-Schlüssel verwenden** wählen und den
-   Schlüssel eintragen.
-3. Sensoren und Glättung wie unten beschrieben auswählen.
+1. Optional Bereiche und Labels wählen, um die Vorschläge einzugrenzen.
+2. Die vorgeschlagenen Sensoren prüfen und bestätigen (höchstens 50).
+   Vorgeschlagen werden Leistung, Temperatur, Luftfeuchte (Messwerte) und
+   Energiezähler; deaktivierte Entitäten werden übergangen.
+3. Empfindlichkeit (niedrig, mittel, hoch) und Benachrichtigungen wählen.
 
-### Neues Konto mit Einladungscode anlegen
+Auswahl und Einstellungen lassen sich unter **Konfigurieren** ändern. Bei
+geänderter Einheit beginnt das Lernen für diesen Sensor neu; entfernte Sensoren
+verlieren ihren Lernstand.
 
-Für ein neues Konto direkt aus Home Assistant benötigst du einen Einladungscode,
-den dir der Betreiber von powermesh.de persönlich zur Verfügung stellt. Der Code
-ist 24 Stunden gültig und erlaubt genau eine Registrierung, auch wenn das Konto
-später gelöscht oder Home Assistant neu eingerichtet wird. Er ist eine
-Berechtigung zur Registrierung, kein Nachweis für eine bestimmte Installation.
-Für eine E-Mail-Adresse mit bestehendem Konto ist dieser Weg nicht möglich;
-verwende dann einen API-Schlüssel.
+Die Aktion `powermesh_energy.acknowledge` bestätigt eine Meldung (Befund-ID aus
+den Attributen des Sensors **Offene Auffälligkeiten**) oder ohne ID alle offenen
+Meldungen. Der Binärsensor **Auffälligkeit** ist eingeschaltet, solange eine
+Meldung unbestätigt ist, und eignet sich als Auslöser eigener Automationen.
 
-1. **Neues Konto mit Einladungscode anlegen** wählen und die Datenschutzhinweise,
-   die Nutzungsbedingungen sowie die Einwilligung zur Speicherung der Messwerte
-   jeweils einzeln bestätigen.
-2. Sensoren und Glättung auswählen (siehe unten). Erst danach wird registriert.
-3. E-Mail-Adresse, Passwort und Einladungscode eingeben. Die Angaben werden einmal
-   verschlüsselt an powermesh.de gesendet. Home Assistant speichert anschließend nur
-   den ausgegebenen persönlichen API-Schlüssel – nicht E-Mail-Adresse, Passwort
-   oder Einladungscode. Die Registrierung wird nie automatisch wiederholt.
-4. Die Integration startet sofort. Gleichzeitig erscheinen ein Hinweis und eine
-   Reparaturmeldung mit der Frist für die Kontoeinrichtung.
-5. Innerhalb von **168 Stunden (7 Tagen)** nach der Registrierung auf powermesh.de
-   mit E-Mail-Adresse und Passwort anmelden (beim ersten Besuch ohne
-   Authenticator-Code), den Bestätigungslink per E-Mail anfordern, ihn bestätigen
-   und danach den Authenticator einrichten. Die Reparaturmeldung verschwindet erst,
-   wenn powermesh.de den Abschluss bestätigt.
+### Lokale Energieübersicht
 
-Wird die Einrichtung nicht rechtzeitig abgeschlossen, sperrt powermesh.de das
-Konto zur Frist. Die automatische Löschung erfolgt erst durch einen eingerichteten
-Bereinigungslauf; ein solcher Lauf ist für den Produktivbetrieb derzeit nicht
-eingerichtet. Eine automatische Kontolöschung ist daher nicht garantiert.
-Home Assistant zeigt die Sperre als Fehlermeldung an und legt weder ein neues
-Konto noch einen neuen Schlüssel automatisch an. Ausstehende Messwerte bleiben
-lokal, bis du den Eintrag entfernst.
+1. **Lokal ohne Konto nutzen** wählen.
+2. Mindestens eine Quelle auswählen: Solarleistung, Netzbezug oder Einspeisung
+   in W/kW, optional Akkustand in Prozent. Die Auswahl ist nach Einheiten
+   gefiltert. Netzbezug und Einspeisung brauchen getrennte einseitige Quellen;
+   ein vorzeichenbehafteter gemeinsamer Netzsensor wird nicht automatisch geteilt.
+3. Speichern. Quellen lassen sich unter **Konfigurieren** ändern oder entfernen.
 
-Liefert powermesh.de nach der Registrierung zwar einen API-Schlüssel, aber keinen
-gültigen Kontostatus, wird der Schlüssel trotzdem gespeichert und ein
-Protokollfehler mit unbekannter Frist gemeldet. Schließe die Einrichtung dann so
-bald wie möglich ab; die Meldung verschwindet, sobald powermesh.de den
-Kontostatus meldet.
+### Dashboard-Karten
 
-Bleibt das Ergebnis der Registrierung unklar (zum Beispiel bei einem
-Verbindungsabbruch), wurde das Konto möglicherweise trotzdem angelegt und der
-Einladungscode verbraucht. Melde dich dann auf powermesh.de an; gelingt das,
-schließe die Einrichtung ab, erstelle einen API-Schlüssel und verwende ihn.
-Andernfalls fordere beim Betreiber einen neuen Code an.
+Beide Karten liegen in derselben Datei, die die Integration lokal in HA
+bereitstellt. Einmalig unter **Einstellungen → Dashboards → Ressourcen**
+(bei Bedarf erweiterten Modus aktivieren) diese Ressource hinzufügen:
 
-### Sensoren und Glättung
+- URL: `/powermesh-energy/powermesh-energy-card.js`
+- Typ: **JavaScript-Modul**
 
-1. Die Integration schlägt anhand deines **Energie-Dashboards** Sensoren vor. Das ist
-   nur eine Orientierung: Du kannst jeden numerischen Sensor auswählen, auch
-   Temperatur-Sensoren. Die Auswahl lässt sich später über **Konfigurieren** ändern
-   oder auf den Vorschlag zurücksetzen.
-2. Im nächsten Schritt legst du je Sensor eine **Glättung** fest – ähnlich dem
-   Filter-Helfer von Home Assistant: zeitgewichteter Mittelwert oder Drosselung
-   über 10 Sekunden bis 1 Stunde, oder keine Glättung. Standard ist ein
-   **1-Minuten-Mittelwert**; dadurch entstehen weniger übertragene Werte.
+Danach das Dashboard neu laden und **Bearbeiten → Karte hinzufügen** wählen.
 
-Die Integration sendet gesammelt in regelmäßigen Abständen und puffert bei
-Verbindungsproblemen lokal. Werte werden erst nach einer ausdrücklichen
-Speicherbestätigung aus dem Puffer entfernt. Bei einem Schlüsselwechsel werden
-ausstehende Werte nicht stillschweigend neu zugeordnet. Der lokale Puffer ist auf die
-für dein Benutzerkonto eingerichtete Messwertanzahl begrenzt (Standard: 5.000,
-sofern der Betreiber keinen anderen Default konfiguriert hat). Das zuletzt vom
-Dienst bestätigte Limit bleibt für denselben API-Schlüssel lokal gespeichert.
-Ohne bekanntes Limit werden keine neuen Messwerte gepuffert. Bei vollem Puffer
-bleiben vorhandene Werte erhalten; nur weitere neue Werte werden verworfen.
-Der Verlust wird gezählt und als Fehler im Home-Assistant-Protokoll gemeldet.
-Übertragungsstatus und Reparaturmeldung zeigen den Fehler an, bis nach einer
-erfolgreichen Übertragung wieder Platz frei ist. Wird das Limit unter den
-aktuellen Füllstand gesenkt, bleiben bereits gespeicherte Werte erhalten;
-neue Werte werden bis zum Abbau des Rückstaus nicht aufgenommen.
-Große Rückstände werden in mehrere größenbegrenzte Nachrichten aufgeteilt;
-das Anfragelimit des Dienstes bleibt dabei wirksam.
-Status, ausstehende Werte und letzte Übertragung
-siehst du an den Diagnose-Sensoren. Ist ein Update der Integration nötig,
-erscheint eine Reparaturmeldung in Home Assistant.
+**Powermesh Auffälligkeiten** zeigt offene Meldungen mit
+**Bestätigen**-Schaltfläche, je Sensor Status, aktuellen Wert, Normalbereich als
+Balken und Lernfortschritt sowie zuletzt beendete Meldungen:
 
-Für Updates über HACS öffne **HACS → Integrationen → Powermesh Energie**,
-installiere die angebotene neue Version und starte Home Assistant danach neu.
+```yaml
+type: custom:powermesh-anomaly-card
+entity: sensor.powermesh_auffalligkeiten_offene_auffalligkeiten
+```
+
+**Powermesh Energie** zeigt die Quellen der lokalen Energieübersicht. Fehlende
+Quellen, ungeeignete Einheiten, negative einseitige Leistung und ungültiger
+Akkustand werden ausdrücklich angezeigt. Nach standardmäßig 15 Minuten ohne
+Aktualisierung wird der letzte Wert als **Veraltet** markiert (im Karteneditor
+änderbar). Keine Verbrauchsbilanz, Tagesaggregation, Sparprognose oder Steuerung.
+
+```yaml
+type: custom:powermesh-energy-card
+entity: sensor.powermesh_energie_energieubersicht
+```
+
+Jeweils den tatsächlichen Entitätsnamen aus HA verwenden. Anklicken eines
+Sensors öffnet die HA-Sensoransicht. Native Handy-Widgets sind nicht enthalten.
+
+## Updates
+
+Updates erscheinen unter **Einstellungen → System → Updates** bzw. unter
+**Einstellungen → Marketplace** (bis Home Assistant 2026.10: HACS). Die neue
+Version installieren und Home Assistant danach neu starten.
 
 ## Versionen
 
-Diese Integration ist ein Entwicklungsstand in Version **0.7.1** und benötigt
-einen entsprechend aktualisierten Dienst. Sie wird
-unabhängig von der Website und dem Dienst versioniert. Vergleiche und Auswertungen
-sind nicht implementiert. Halte die Integration über HACS aktuell.
+Diese Integration ist ein Prototyp in Version **0.9.0**. Sie wird unabhängig von
+der Website powermesh.de versioniert und benötigt keinen Dienst.
 
 ## Lokale Tests
 
@@ -160,12 +169,12 @@ pwsh -NoProfile -File ./build-package.ps1 -DryRun
 pwsh -NoProfile -File ./build-package.ps1 -BuildPackage
 ```
 
-Das Archiv `dist/powermesh-energy-homeassistant-0.7.1.zip` enthält
+Das Archiv `dist/powermesh-energy-homeassistant-0.9.0.zip` enthält
 `custom_components/powermesh_energy` und die Lizenz, keine Testumgebung, Caches
 oder Zugangsdaten. Vorhandene Archive werden nicht überschrieben.
 Den enthaltenen Komponentenordner in das Konfigurationsverzeichnis von
 Home Assistant entpacken und Home Assistant neu starten. Die Skripte installieren
-nichts automatisch und veröffentlichen kein HACS-Release.
+nichts automatisch und veröffentlichen kein Release im Marketplace.
 
 Die PowerShell-Paketprüfung läuft mit `node --test tests/package.test.mjs`
 (Node wird nur für diese lokale Paketprüfung benötigt).
@@ -183,15 +192,29 @@ Lizenz; es werden daran keine Rechte eingeräumt. Ihre Nutzung richtet sich nach
 den [Nutzungsbedingungen von powermesh.de](https://powermesh.de/?r=terms) und setzt
 einen persönlichen Zugang voraus.
 
+## Ausblick
+
+Nicht Teil dieser Version, ohne Zusage oder Termin:
+
+- **Freiwillige Übertragung an powermesh.de:** Die Integration soll ausgewählte
+  Messwerte später optional an powermesh.de übertragen können. Die dafür
+  vorhandene Verbindung ist im Quellcode erhalten, in dieser Version aber
+  deaktiviert und wird bei der Einrichtung nicht angeboten. Für eine Übertragung
+  würden ein Konto, eine ausdrückliche Einwilligung und die
+  [Nutzungsbedingungen von powermesh.de](https://powermesh.de/?r=terms) gelten.
+- **Vergleich zwischen Smart Homes:** Aus übertragenen Werten könnten sich später
+  geeignete Systeme miteinander vergleichen lassen. Welche Vergleiche sinnvoll
+  sind, ist offen; ein Vergleich ist nicht implementiert.
+
 ---
 
-**English:** Prototype Home Assistant integration for powermesh.de. Smart-home
-comparison and improvement analysis are in development and not implemented. The
-service currently stores only selected sensor readings. Readings and optional
-Home Assistant metadata are pseudonymously associated with the account; see the
-German privacy description above. Setup works with an existing personal API key
-or, with a single-use operator invitation, by creating a new account whose email
-confirmation and authenticator setup must be completed on powermesh.de within
-168 hours; otherwise the account and all its data are deleted. The powermesh.de
-terms of use apply. Code: MIT. The service is not covered by this
-license.
+**English:** Prototype Home Assistant integration for local anomaly detection.
+It suggests sensors from your areas, labels and devices, learns a normal range
+for confirmed power, temperature and humidity sensors, checks energy meters for
+glitches and decreases, detects missing data and reports findings via Home
+Assistant notifications, an optional notify entity, a findings sensor, a problem
+binary sensor and a dashboard card. No account, no data transfer and no AI are
+used. Install it via Settings → Marketplace (Home Assistant 2026.11+) or HACS
+(2026.10 and older). Code: MIT. Outlook, not part of this version: an optional
+transfer of selected readings to powermesh.de and a comparison between smart
+homes; the existing transfer code is disabled.

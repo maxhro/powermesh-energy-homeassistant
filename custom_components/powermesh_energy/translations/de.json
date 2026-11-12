@@ -2,12 +2,47 @@
   "config": {
     "step": {
       "user": {
-        "title": "Mit powermesh.de verbinden",
-        "description": "Wähle, ob du einen vorhandenen persönlichen API-Schlüssel verwendest oder mit einem Einladungscode ein neues powermesh.de-Konto anlegst.",
+        "title": "Powermesh Energie",
+        "description": "Erkenne auffälliges Verhalten und Datenprobleme ausgewählter Sensoren lokal in Home Assistant oder nutze die lokale Energieübersicht. Ein Konto oder eine Datenübertragung ist nicht erforderlich.",
         "menu_options": {
+          "monitor": "Auffälligkeiten lokal erkennen",
+          "local": "Lokal ohne Konto nutzen",
           "api_key": "Vorhandenen API-Schlüssel verwenden",
-          "register": "Neues Konto mit Einladungscode anlegen"
+          "register_website": "Neues Konto über Website verbinden",
+          "register": "Betreiber-Einladung verwenden"
         }
+      },
+      "register_website": {
+        "title": "Neues Konto verbinden",
+        "description": "Wähle zuerst die Sensoren. Home Assistant zeigt danach einen einmaligen Code. E-Mail-Adresse, Passwort, E-Mail-Bestätigung und Authenticator richtest du ausschließlich auf powermesh.de ein. Messwertspeicherung beginnt erst nach deiner ausdrücklichen Zustimmung dort und abgeschlossener E-Mail-/MFA-Einrichtung. {url}",
+        "data": {"continue": "Sensoren auswählen und Website-Code anfordern"}
+      },
+      "pairing": {
+        "title": "Konto auf powermesh.de einrichten",
+        "description": "Öffne {url}, gib den Einrichtungscode ein und richte E-Mail-Adresse, Passwort, E-Mail-Bestätigung und Authenticator ein. Der Code läuft um Unix-Zeit {expires} ab und kann nur einmal verwendet werden. Danach hier „Abgeschlossen“ wählen. Home Assistant fragt keine Kontozugangsdaten oder MFA-Geheimnisse ab.",
+        "data": {"complete": "E-Mail und Authenticator auf der Website abgeschlossen", "restart": "Neuen Verknüpfungscode anfordern und dieses Konto nicht verbinden"}
+      },
+      "monitor": {
+        "title": "Auffälligkeiten: Struktur",
+        "description": "Powermesh schlägt passende Sensoren aus deinen Bereichen, Labels und Geräten vor: Leistung, Temperatur und Luftfeuchte erhalten einen gelernten Normalbereich; Energiezähler werden auf Sprünge und Rückgänge geprüft. Optional kannst du die Vorschläge eingrenzen. Die Auswertung läuft vollständig lokal.",
+        "data": {"areas": "Bereiche", "labels": "Labels"},
+        "data_description": {"areas": "Leer: alle Bereiche.", "labels": "Leer: alle Labels."}
+      },
+      "monitor_select": {
+        "title": "Auffälligkeiten: Sensoren",
+        "description": "{count} passende Sensoren gefunden. Bestätige bis zu {max} Sensoren; nur bestätigte Sensoren werden ausgewertet.",
+        "data": {"monitors": "Überwachte Sensoren"}
+      },
+      "monitor_settings": {
+        "title": "Auffälligkeiten: Benachrichtigungen",
+        "description": "Normalbereiche werden mindestens 24 Stunden gelernt, bevor Abweichungen gemeldet werden. Eine Abweichung muss 10 Minuten anhalten.",
+        "data": {"sensitivity": "Empfindlichkeit", "notify_persistent": "Home-Assistant-Benachrichtigungen anzeigen", "notify_entity": "Zusätzliche Benachrichtigungs-Entität"},
+        "data_description": {"notify_entity": "Optional, z. B. eine Mobile App. Die Nachricht enthält Sensorname, Bereich und Werte."}
+      },
+      "local": {
+        "title": "Lokale Energieübersicht",
+        "description": "Wähle mindestens eine Quelle. Solar- und Netzleistung: W/kW. Akkustand: %. Netzbezug und Einspeisung benötigen getrennte, einseitige Quellen. Es werden keine Messwerte übertragen.",
+        "data": {"solar_power": "Solarleistung", "grid_import_power": "Netzbezug", "grid_export_power": "Einspeisung", "battery_soc": "Akkustand"}
       },
       "api_key": {
         "title": "Mit powermesh.de verbinden",
@@ -66,6 +101,9 @@
       }
     },
     "error": {
+      "invalid_source": "Bitte eine Quelle mit passender Einheit auswählen.",
+      "duplicate_source": "Bitte unterschiedliche Quellen für unterschiedliche Rollen wählen.",
+      "snapshot_limit": "Für die neue Cloud-Snapshot-Einrichtung kannst du höchstens 200 Sensoren auswählen.",
       "invalid_auth": "Der API-Schlüssel wurde abgelehnt. Prüfe ihn in deinem powermesh.de-Konto.",
       "consent_required": "Auf powermesh.de fehlt die Einwilligung zur Übertragung oder der Schlüssel hat keine Schreibberechtigung.",
       "rate_limited": "Zu viele Anfragen. Bitte in einer Minute erneut versuchen.",
@@ -73,8 +111,11 @@
       "unknown": "Unerwarteter Fehler.",
       "no_entities": "Bitte mindestens eine Entität auswählen.",
       "incompatible": "Wähle nur Sensor-Entitäten aus: {invalid}",
+      "no_candidates": "Keine passenden Sensoren gefunden. Entferne Filter oder prüfe Geräteklasse und Einheit deiner Sensoren.",
+      "no_monitors": "Bitte mindestens einen Sensor auswählen.",
+      "too_many_monitors": "Bitte höchstens 50 Sensoren auswählen.",
       "api_incompatible": "Die Serverversion passt nicht zu dieser Version der Integration.",
-      "update_required": "Bitte die Integration (HACS) aktualisieren, um diesen Server zu verbinden.",
+      "update_required": "Bitte die Integration aktualisieren (Einstellungen → Marketplace, vor Home Assistant 2026.11 über HACS), um diesen Server zu verbinden.",
       "consent_missing": "Bitte diese Erklärung ausdrücklich bestätigen.",
       "invalid_email": "Bitte eine gültige E-Mail-Adresse eingeben.",
       "password_required": "Bitte ein Passwort eingeben.",
@@ -86,13 +127,18 @@
       "account_exists": "Für diese E-Mail-Adresse besteht bereits ein Konto. Erstelle auf powermesh.de einen API-Schlüssel und wähle „Vorhandenen API-Schlüssel verwenden“.",
       "registration_rate_limited": "Zu viele Registrierungsversuche. Bitte später erneut versuchen.",
       "registration_rejected": "powermesh.de hat die Registrierung abgelehnt.",
-      "registration_unavailable": "Der Dienst bietet die Registrierung derzeit nicht an."
+      "registration_unavailable": "Die automatische Registrierung ist derzeit nicht freigeschaltet. Verwende eine Betreiber-Einladung oder einen vorhandenen API-Schlüssel.",
+      "pairing_pending": "Die Website-Einrichtung ist noch nicht abgeschlossen. Bestätige deine E-Mail-Adresse und richte den Authenticator ein, danach hier erneut prüfen.",
+      "pairing_expired": "Der Code ist abgelaufen. Ein neuer Code wurde angefordert.",
+      "pairing_used": "Dieser Code wurde bereits verwendet. Schließe die Website-Einrichtung ab oder starte einen neuen HA-Verbindungsablauf.",
+      "registration_uncertain": "Die Antwort war unklar. Du kannst dieselbe Einrichtung sicher erneut prüfen; es wird kein zweites Konto oder zusätzlicher Schlüssel erstellt."
     },
     "abort": {
       "already_configured": "Dieser Server ist bereits eingerichtet.",
       "reauth_successful": "API-Schlüssel aktualisiert.",
       "registration_uncertain": "Das Ergebnis der Registrierung ist unklar (zum Beispiel wegen Zeitüberschreitung oder Verbindungsabbruch). Das Konto wurde möglicherweise angelegt; der Einladungscode ist dann verbraucht und kann nicht erneut verwendet werden. Es wird nichts automatisch wiederholt. Melde dich auf powermesh.de mit E-Mail-Adresse und Passwort an: Gelingt das, schließe E-Mail-Bestätigung und Authenticator fristgerecht ab, erstelle danach einen API-Schlüssel und wähle „Vorhandenen API-Schlüssel verwenden“. Andernfalls fordere beim Betreiber einen neuen Code an.",
-      "registration_incomplete": "Die Registrierung wurde nicht vollständig vorbereitet. Bitte die Einrichtung neu starten."
+      "registration_incomplete": "Die Registrierung wurde nicht vollständig vorbereitet. Bitte die Einrichtung neu starten.",
+      "cloud_transfer_disabled": "Die Übertragung an powermesh.de ist in dieser Version deaktiviert. Nutze stattdessen die lokale Erkennung von Auffälligkeiten."
     },
     "create_entry": {
       "account_setup_required": "Das Konto wurde angelegt und der API-Schlüssel in Home Assistant gespeichert. Die Einrichtung ist noch nicht abgeschlossen: Melde dich bis {deadline} auf {url} mit E-Mail-Adresse und Passwort an, fordere den Bestätigungslink an, bestätige ihn und richte den Authenticator ein. Andernfalls wird das Konto gesperrt und mit allen gespeicherten Daten gelöscht.\n\n{warning}",
@@ -101,6 +147,28 @@
   },
   "options": {
     "step": {
+      "monitor": {
+        "title": "Auffälligkeiten: Struktur",
+        "description": "Optional die Vorschläge auf Bereiche und Labels eingrenzen. Bereits überwachte Sensoren bleiben auswählbar.",
+        "data": {"areas": "Bereiche", "labels": "Labels"},
+        "data_description": {"areas": "Leer: alle Bereiche.", "labels": "Leer: alle Labels."}
+      },
+      "monitor_select": {
+        "title": "Auffälligkeiten: Sensoren",
+        "description": "{count} passende Sensoren gefunden. Bestätige bis zu {max} Sensoren; entfernte Sensoren verlieren ihren gelernten Normalbereich.",
+        "data": {"monitors": "Überwachte Sensoren"}
+      },
+      "monitor_settings": {
+        "title": "Auffälligkeiten: Benachrichtigungen",
+        "description": "Normalbereiche werden mindestens 24 Stunden gelernt, bevor Abweichungen gemeldet werden. Eine Abweichung muss 10 Minuten anhalten.",
+        "data": {"sensitivity": "Empfindlichkeit", "notify_persistent": "Home-Assistant-Benachrichtigungen anzeigen", "notify_entity": "Zusätzliche Benachrichtigungs-Entität"},
+        "data_description": {"notify_entity": "Optional, z. B. eine Mobile App. Die Nachricht enthält Sensorname, Bereich und Werte."}
+      },
+      "local": {
+        "title": "Lokale Energieübersicht",
+        "description": "Gewählte Quellen ändern oder entfernen. Mindestens eine Quelle ist nötig. Es werden keine Messwerte übertragen.",
+        "data": {"solar_power": "Solarleistung", "grid_import_power": "Netzbezug", "grid_export_power": "Einspeisung", "battery_soc": "Akkustand"}
+      },
       "init": {
         "title": "Übertragene Entitäten",
         "description": "Vorschlag aus deinem Energie-Dashboard:\n{suggestion}\n\nNicht vorgeschlagen:\n{skipped}\n\n{invalid}",
@@ -120,8 +188,17 @@
       }
     },
     "error": {
+      "invalid_source": "Bitte eine Quelle mit passender Einheit auswählen.",
+      "duplicate_source": "Bitte unterschiedliche Quellen für unterschiedliche Rollen wählen.",
+      "snapshot_limit": "Für die neue Cloud-Snapshot-Einrichtung kannst du höchstens 200 Sensoren auswählen.",
       "no_entities": "Bitte mindestens eine Entität auswählen.",
-      "incompatible": "Wähle nur Sensor-Entitäten aus: {invalid}"
+      "incompatible": "Wähle nur Sensor-Entitäten aus: {invalid}",
+      "no_candidates": "Keine passenden Sensoren gefunden. Entferne Filter oder prüfe Geräteklasse und Einheit deiner Sensoren.",
+      "no_monitors": "Bitte mindestens einen Sensor auswählen.",
+      "too_many_monitors": "Bitte höchstens 50 Sensoren auswählen."
+    },
+    "abort": {
+      "cloud_transfer_disabled": "Die Übertragung an powermesh.de ist in dieser Version deaktiviert. Es wird nichts gesendet; gespeicherte Daten bleiben unverändert."
     }
   },
   "entity": {
@@ -147,6 +224,14 @@
       },
       "last_upload": {
         "name": "Letzte Übertragung"
+      },
+      "findings": {
+        "name": "Offene Auffälligkeiten"
+      }
+    },
+    "binary_sensor": {
+      "problem": {
+        "name": "Auffälligkeit"
       }
     }
   },
@@ -173,15 +258,19 @@
     },
     "update_required": {
       "title": "Powermesh Energie: Update erforderlich",
-      "description": "Der Server nimmt Version {installed} der Integration nicht mehr an. Messwerte bleiben lokal gespeichert. Aktualisiere die Integration in HACS und starte Home Assistant neu."
+      "description": "Der Server nimmt Version {installed} der Integration nicht mehr an. Messwerte bleiben lokal gespeichert. Aktualisiere die Integration unter Einstellungen → Marketplace (vor Home Assistant 2026.11 in HACS) und starte Home Assistant neu."
     },
     "api_incompatible": {
       "title": "Powermesh Energie: Server inkompatibel",
-      "description": "Version {installed} der Integration unterstützt die Serverversion ({server}) nicht. Messwerte bleiben lokal gespeichert. Prüfe in HACS, ob ein Update verfügbar ist."
+      "description": "Version {installed} der Integration unterstützt die Serverversion ({server}) nicht. Messwerte bleiben lokal gespeichert. Prüfe unter Einstellungen → Marketplace (vor Home Assistant 2026.11 in HACS), ob ein Update verfügbar ist."
     },
     "update_available": {
       "title": "Powermesh Energie: Update verfügbar",
-      "description": "Version {latest} der Integration ist verfügbar (installiert: {installed}). Aktualisiere sie in HACS."
+      "description": "Version {latest} der Integration ist verfügbar (installiert: {installed}). Aktualisiere sie unter Einstellungen → Marketplace (vor Home Assistant 2026.11 in HACS)."
+    },
+    "cloud_transfer_disabled": {
+      "title": "Powermesh Energie: Übertragung an powermesh.de deaktiviert",
+      "description": "Diese Version wertet Sensoren nur lokal aus. Die vorhandene powermesh.de-Verbindung bleibt erhalten, sendet aber nichts; lokal gepufferte Messwerte und der gespeicherte API-Schlüssel bleiben unverändert. Entferne den Eintrag, wenn du ihn nicht mehr brauchst, oder richte die lokale Erkennung von Auffälligkeiten ein."
     },
     "account_setup_required": {
       "title": "powermesh.de: Kontoeinrichtung abschließen",
@@ -196,7 +285,23 @@
       "description": "Bei der Registrierung wurde ein API-Schlüssel ausgestellt, aber powermesh.de hat keinen gültigen Kontostatus gemeldet (Protokollfehler); eine Frist ist daher nicht bekannt. Schließe die Einrichtung so bald wie möglich auf {url} ab: Melde dich mit E-Mail-Adresse und Passwort an, fordere den Bestätigungslink an, bestätige ihn und richte den Authenticator ein. Nicht innerhalb der Registrierungsfrist eingerichtete Konten werden gesperrt und mit allen gespeicherten Daten gelöscht. Diese Meldung verschwindet, sobald powermesh.de den Kontostatus meldet."
     }
   },
+  "services": {
+    "acknowledge": {
+      "name": "Auffälligkeit bestätigen",
+      "description": "Bestätigt eine Auffälligkeit. Ohne ID werden alle offenen Auffälligkeiten bestätigt.",
+      "fields": {
+        "finding_id": {"name": "Befund-ID", "description": "ID aus den Attributen des Sensors „Offene Auffälligkeiten“."}
+      }
+    }
+  },
   "selector": {
+    "sensitivity": {
+      "options": {
+        "low": "Niedrig (nur starke Abweichungen)",
+        "medium": "Mittel",
+        "high": "Hoch (mehr Meldungen)"
+      }
+    },
     "smoothing": {
       "options": {
         "mean_10s": "Mittelwert über 10 Sekunden",
