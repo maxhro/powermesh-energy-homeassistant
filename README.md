@@ -133,6 +133,14 @@ type: custom:powermesh-anomaly-card
 entity: sensor.powermesh_auffalligkeiten_offene_auffalligkeiten
 ```
 
+Optional im Karteneditor zuschaltbar (standardmäßig aus):
+
+| Option | Wirkung |
+|---|---|
+| `show_learning_bar` | Lernfortschritt als Balken |
+| `show_history`, `history_hours` (1–48, Standard 6) | Verlaufsdiagramm je Sensor mit eingezeichnetem Normalbereich; liest nur die vorhandene HA-Historie |
+| `show_timeline`, `timeline_days` (1–30, Standard 7) | Zeitleiste offener und beendeter Auffälligkeiten, getrennt nach Verhalten und Datenqualität |
+
 **Powermesh Energie** zeigt die Quellen der lokalen Energieübersicht. Fehlende
 Quellen, ungeeignete Einheiten, negative einseitige Leistung und ungültiger
 Akkustand werden ausdrücklich angezeigt. Nach standardmäßig 15 Minuten ohne
