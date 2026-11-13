@@ -72,6 +72,7 @@ async def start_key_flow(hass):
 async def test_local_flow_validates_roles_without_network(hass):
     hass.states.async_set("sensor.solar", "450", {"unit_of_measurement": "W"})
     hass.states.async_set("sensor.battery", "60", {"unit_of_measurement": "%"})
+    hass.states.async_set("sensor.consumer", "300", {"unit_of_measurement": "W"})
     hass.states.async_set("sensor.energy", "10", ENERGY)
     with patch("custom_components.powermesh_energy.config_flow.PowermeshClient") as client:
         result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
@@ -84,13 +85,13 @@ async def test_local_flow_validates_roles_without_network(hass):
         with pytest.raises(InvalidData):
             await hass.config_entries.flow.async_configure(result["flow_id"], {"solar_power": "sensor.energy"})
         assert _local_errors(hass, {"solar_power": "sensor.energy"}) == {"solar_power": "invalid_source"}
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"solar_power": "sensor.solar", "grid_import_power": "sensor.solar"})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"solar_power": ["sensor.solar"], "grid_import_power": ["sensor.solar"]})
         assert result["errors"] == {"grid_import_power": "duplicate_source"}
         with patch("custom_components.powermesh_energy.async_setup_entry", return_value=True):
-            result = await hass.config_entries.flow.async_configure(result["flow_id"], {"solar_power": "sensor.solar", "battery_soc": "sensor.battery"})
+                result = await hass.config_entries.flow.async_configure(result["flow_id"], {"solar_power": ["sensor.solar"], "battery_soc": ["sensor.battery"], "consumer_power": ["sensor.consumer"]})
         assert result["type"] is FlowResultType.CREATE_ENTRY
         assert result["data"] == {CONF_MODE: MODE_LOCAL}
-        assert result["options"][CONF_ROLES] == {"solar_power": "sensor.solar", "battery_soc": "sensor.battery"}
+        assert result["options"][CONF_ROLES] == {"solar_power": ["sensor.solar"], "battery_soc": ["sensor.battery"], "consumer_power": ["sensor.consumer"]}
         client.assert_not_called()
 
 
@@ -100,6 +101,7 @@ async def test_local_entry_setup_options_diagnostics_and_removal(hass):
     from custom_components.powermesh_energy.sensor import PowermeshOverviewSensor
 
     hass.states.async_set("sensor.solar", "500", {"unit_of_measurement": "W"})
+    hass.states.async_set("sensor.other", "400", {"unit_of_measurement": "W"})
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_MODE: MODE_LOCAL}, options={CONF_ROLES: {"solar_power": "sensor.solar"}})
     entry.add_to_hass(hass)
     resources = AsyncMock()
@@ -122,8 +124,8 @@ async def test_local_entry_setup_options_diagnostics_and_removal(hass):
     assert await async_get_config_entry_diagnostics(hass, entry) == {"mode": "local", "integration_version": "0.9.2"}
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["step_id"] == "local"
-    result = await hass.config_entries.options.async_configure(result["flow_id"], {"grid_import_power": "sensor.solar"})
-    assert result["data"] == {CONF_ROLES: {"grid_import_power": "sensor.solar"}}
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"grid_import_power": ["sensor.solar", "sensor.other"]})
+    assert result["data"] == {CONF_ROLES: {"grid_import_power": ["sensor.solar", "sensor.other"]}}
     with patch("homeassistant.helpers.storage.Store") as store:
         await async_remove_entry(hass, entry)
         store.assert_not_called()

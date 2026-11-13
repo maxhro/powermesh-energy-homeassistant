@@ -96,7 +96,7 @@ globalThis.HTMLElement = class {};
 globalThis.customElements = { get: () => undefined, define: () => {} };
 globalThis.window = { customCards: [] };
 const cardSource = readFileSync(join(root, component, 'frontend/powermesh-energy-card.js'), 'utf8');
-const { sourceValue, configuredEnergyRoles, bandGeometry, sparklinePath, timelineSegments, numericState, smoothHistory, powerHistoryGeometry } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
+const { sourceValue, roleEntities, summedSourceValue, averagedSourceValue, configuredEnergyRoles, bandGeometry, sparklinePath, timelineSegments, numericState, smoothHistory, powerHistoryGeometry } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
 const now = Date.parse('2026-11-05T12:00:00Z');
 const source = (value, unit = 'W', stamp = '2026-11-05T12:00:00Z') => ({
   state: value, attributes: { unit_of_measurement: unit }, last_updated: stamp,
@@ -127,8 +127,32 @@ test('local energy widget converts units and identifies missing, invalid, signed
 test('energy card shows only configured roles, including unavailable sources', () => {
   assert.deepEqual(configuredEnergyRoles({}, {}).map(([role]) => role), []);
   assert.deepEqual(configuredEnergyRoles({}, { solar_power: 'sensor.solar' }).map(([role]) => role), ['solar_power']);
+  assert.deepEqual(configuredEnergyRoles({}, { solar_power: ['sensor.solar', 'sensor.solar_roof'] }).map(([role]) => role), ['solar_power']);
+  assert.deepEqual(roleEntities({ solar_power: 'sensor.solar' }, {}, 'solar_power'), ['sensor.solar']);
+  assert.deepEqual(roleEntities({ solar_power: ['sensor.solar', 'sensor.solar_roof'] }, {}, 'solar_power'), ['sensor.solar', 'sensor.solar_roof']);
+  assert.deepEqual(roleEntities({ solar_power: [] }, { solar_power: ['sensor.solar'] }, 'solar_power'), ['sensor.solar']);
   assert.deepEqual(configuredEnergyRoles({ grid_import_power: 'sensor.missing' }, { battery_soc: 'sensor.battery' }).map(([role]) => role), ['grid_import_power', 'battery_soc']);
   assert.equal(sourceValue(undefined, 'grid_import_power', now).status, 'Nicht verfügbar');
+});
+
+test('power areas can be summed across W and kW without hiding incomplete sources', () => {
+  const total = summedSourceValue([source('1500', 'W'), source('0.5', 'kW')], 'solar_power', now);
+  assert.deepEqual(total, { value: 2, unit: 'kW', status: '2 Quellen', stale: false });
+  assert.deepEqual(summedSourceValue([source('1500'), undefined], 'grid_import_power', now), {
+    value: null, status: 'Quellen prüfen · 1/2 verfügbar',
+  });
+  assert.match(cardSource, /name: "sum_by_area", selector: \{ boolean: \{\} \}/);
+  assert.match(cardSource, /multiple: true/);
+});
+
+test('battery percentages can be averaged without summing or hiding incomplete sources', () => {
+  assert.deepEqual(averagedSourceValue([source('60', '%'), source('80', '%')], 'battery_soc', now), {
+    value: 70, unit: '%', status: 'Mittelwert aus 2 Sensoren', stale: false,
+  });
+  assert.deepEqual(averagedSourceValue([source('60', '%'), undefined], 'battery_soc', now), {
+    value: null, status: 'Quellen prüfen · 1/2 verfügbar',
+  });
+  assert.match(cardSource, /name: "average_battery_soc", selector: \{ boolean: \{\} \}/);
 });
 
 test('energy card aligns metrics and offers a time-weighted optional power history', () => {

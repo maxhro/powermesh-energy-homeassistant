@@ -42,8 +42,8 @@
       },
       "local": {
         "title": "Local energy overview",
-        "description": "Select at least one source. Solar and grid power: W/kW. Battery charge: %. Grid import and export need separate one-way sources. No readings are transferred.",
-        "data": {"solar_power": "Solar power", "grid_import_power": "Grid import", "grid_export_power": "Grid export", "battery_soc": "Battery charge"}
+        "description": "Select one or more sources per area. Solar, grid and consumer power: W/kW. Battery charge: %. Grid import and export need separate one-way sources. No readings are transferred.",
+        "data": {"solar_power": "Solar power", "grid_import_power": "Grid import", "grid_export_power": "Grid export", "battery_soc": "Battery charge", "consumer_power": "Consumer power"}
       },
       "api_key": {
         "title": "Connect powermesh.de",
@@ -76,14 +76,14 @@
       },
       "register": {
         "title": "New account: information and consent",
-        "description": "A new powermesh.de account requires an invitation code provided by the operator. The code is valid for 24 hours and allows exactly one registration; it does not prove that the official integration is used. Existing accounts are rejected – connect them with an API key.\n\nOnly the sensors you select in the next step are transferred: sensor ID, time, numeric value and unit. Optionally, sensor name, device and state class, area, floor, labels and device ID may be included. The data is pseudonymous and is currently only stored, not analysed, sold or shared.\n\nImportant: within {hours} hours after registration you must confirm your email address and set up the authenticator (two-factor sign-in) on powermesh.de. Otherwise the account is blocked and deleted together with all stored data.\n\n[Privacy notice]({privacy_url}) · [Terms of use]({terms_url}). The powermesh.de terms of use apply.",
+        "description": "A new powermesh.de account requires an invitation code provided by the operator. The code is valid for 24 hours and allows exactly one registration; it does not prove that the official integration is used. Existing accounts are rejected – connect them with an API key.\n\nOnly the sensors you select in the next step are transferred: sensor ID, time, numeric value and unit. Optionally, sensor name, device and state class, area, floor, labels and device ID may be included. This data is pseudonymous and transmitted over encrypted connections; access is restricted through accounts and permissions. Further analysis of stored readings uses pseudonymously associated data and requires separate consent. Storage consent alone does not authorize further analysis.\n\nImportant: within {hours} hours after registration you must confirm your email address and set up the authenticator (two-factor sign-in) on powermesh.de. Otherwise the account is blocked and deleted together with all stored data.\n\n[Privacy notice]({privacy_url}) · [Terms of use]({terms_url}). The powermesh.de terms of use apply.",
         "data": {
           "consent_privacy": "I have read the privacy notice on user management, the service and the protection of my access.",
-          "consent_terms": "I accept the terms of use, version 2026-10-27-ha-registration-v1. I am aware that this is a preliminary draft that has not been legally reviewed.",
+          "consent_terms": "I accept the terms of use, version 2026-11-13-ha-registration-v3. I am aware that this is a preliminary draft that has not been legally reviewed.",
           "consent_storage": "I consent to storing energy readings as described below."
         },
         "data_description": {
-          "consent_storage": "I consent to Powermesh assigning the numeric sensor readings I send from Home Assistant (sensor ID, time, numeric value and unit) to my user account and storing them until the end of the retention period. Where available, sensor name, device and state class, area, floor, labels and device ID may also be stored. This data is pseudonymous, may allow conclusions about my household and is currently only stored, not analysed. It is not sold or passed on to third parties. I can withdraw consent at any time; all API keys are then revoked and all stored readings including metadata are deleted."
+          "consent_storage": "I consent to Powermesh assigning the numeric sensor readings I send from Home Assistant (sensor ID, time, numeric value and unit) to my user account and storing them until the end of the retention period. Where available, sensor name, device and state class, area, floor, labels and device ID may also be stored. This data is pseudonymous, may allow conclusions about my household and is transmitted over encrypted connections. Access is restricted through accounts and permissions. This storage consent alone does not authorize further analysis. Further analysis of stored readings uses pseudonymously associated data and requires separate consent. I can withdraw consent at any time; all API keys are then revoked and all stored readings including metadata are deleted."
         }
       },
       "register_account": {

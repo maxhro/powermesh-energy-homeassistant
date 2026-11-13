@@ -55,7 +55,7 @@ SENSITIVITY_OPTIONS: Final[dict[str, float]] = {"low": 6.0, "medium": 4.0, "high
 DEFAULT_SENSITIVITY: Final = "medium"
 MAX_MONITORS: Final = 50
 MAX_CANDIDATES: Final = 100
-LOCAL_ROLES: Final = ("solar_power", "grid_import_power", "grid_export_power", "battery_soc")
+LOCAL_ROLES: Final = ("solar_power", "grid_import_power", "grid_export_power", "battery_soc", "consumer_power")
 CARD_URL: Final = "/powermesh-energy/powermesh-energy-card.js"
 CONF_UPLOAD_INTERVAL: Final = "upload_interval"
 # Per-entity smoothing option keys, see smoothing.OPTIONS.

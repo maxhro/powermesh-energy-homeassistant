@@ -13,10 +13,20 @@ const roles = [
   ["grid_import_power", "Netzbezug", "mdi:transmission-tower-import", "#22766d"],
   ["grid_export_power", "Einspeisung", "mdi:transmission-tower-export", "#b34f55"],
   ["battery_soc", "Akkustand", "mdi:battery", "#427a3b"],
+  ["consumer_power", "Leistungsverbraucher", "mdi:power-plug", "#5974a5"],
 ];
 
+export function roleEntities(config, configured, role) {
+  const explicit = config[role];
+  const selected = explicit == null || explicit === "" || Array.isArray(explicit) && explicit.length === 0
+    ? configured[role]
+    : explicit;
+  const entities = typeof selected === "string" ? [selected] : Array.isArray(selected) ? selected : [];
+  return [...new Set(entities.filter((entity) => typeof entity === "string" && /^sensor\.[a-z0-9_]+$/.test(entity)))];
+}
+
 export function configuredEnergyRoles(config, configured) {
-  return roles.filter(([role]) => config[role] || configured[role]);
+  return roles.filter(([role]) => roleEntities(config, configured, role).length > 0);
 }
 
 export function sourceValue(state, role, now, staleMinutes = 15) {
@@ -50,6 +60,40 @@ export function sourceValue(state, role, now, staleMinutes = 15) {
   };
 }
 
+export function summedSourceValue(states, role, now, staleMinutes = 15) {
+  const results = states.map((state) => sourceValue(state, role, now, staleMinutes));
+  const available = results.filter((result) => result.value != null);
+  if (!results.length || available.length !== results.length) {
+    return { value: null, status: `Quellen prüfen · ${available.length}/${results.length} verfügbar` };
+  }
+  const watts = available.reduce((total, result) => total + result.value * (result.unit === "kW" ? 1000 : 1), 0);
+  if (!Number.isFinite(watts)) return { value: null, status: "Wert ungültig" };
+  const stale = available.some((result) => result.stale);
+  return {
+    value: watts >= 1000 ? watts / 1000 : watts,
+    unit: watts >= 1000 ? "kW" : "W",
+    status: `${results.length} Quellen${stale ? " · mindestens eine veraltet" : ""}`,
+    stale,
+  };
+}
+
+export function averagedSourceValue(states, role, now, staleMinutes = 15) {
+  const results = states.map((state) => sourceValue(state, role, now, staleMinutes));
+  const available = results.filter((result) => result.value != null);
+  if (!results.length || available.length !== results.length) {
+    return { value: null, status: `Quellen prüfen · ${available.length}/${results.length} verfügbar` };
+  }
+  const value = available.reduce((total, result) => total + result.value, 0) / available.length;
+  if (!Number.isFinite(value)) return { value: null, status: "Wert ungültig" };
+  const stale = available.some((result) => result.stale);
+  return {
+    value,
+    unit: "%",
+    status: `Mittelwert aus ${results.length} Sensoren${stale ? " · mindestens einer veraltet" : ""}`,
+    stale,
+  };
+}
+
 class PowermeshEnergyCard extends HTMLElement {
   constructor() {
     super();
@@ -62,13 +106,14 @@ class PowermeshEnergyCard extends HTMLElement {
         header ha-icon { color: var(--primary-color); flex: none; }
         h2 { flex: 1; min-width: 0; margin: 0; font-size: 20px; font-weight: 600; letter-spacing: 0; overflow-wrap: anywhere; }
         .local { color: var(--secondary-text-color); font-size: 12px; }
-        .values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; grid-auto-rows: minmax(144px, auto); padding: 0 12px 12px; }
+        .values { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); align-items: stretch; grid-auto-rows: minmax(144px, auto); padding: 0 12px 12px; }
         .metric { display: flex; flex-direction: column; align-items: flex-start; font: inherit; color: var(--primary-text-color); text-align: left; background: transparent; border: 0; border-top: 1px solid var(--divider-color); padding: 16px 8px; min-width: 0; width: 100%; min-height: 144px; box-sizing: border-box; }
         button.metric { cursor: pointer; }
         button.metric:hover { background: var(--secondary-background-color); }
         button.metric:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
         .label { display: flex; align-items: center; gap: 6px; font-size: 14px; overflow-wrap: anywhere; }
         .label ha-icon { color: var(--metric-color); --mdc-icon-size: 20px; flex: none; }
+        .source-name { display: block; max-width: 100%; color: var(--secondary-text-color); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
         .number { display: block; font-size: 28px; font-weight: 600; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
         .unit { font-size: 14px; font-weight: 400; padding-left: 5px; }
         .status { display: block; color: var(--secondary-text-color); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -100,7 +145,9 @@ class PowermeshEnergyCard extends HTMLElement {
   setConfig(config) {
     if (!config || typeof config !== "object") throw new Error("Konfiguration fehlt");
     for (const key of ["entity", ...roles.map(([role]) => role)]) {
-      if (config[key] != null && config[key] !== "" && (typeof config[key] !== "string" || !/^sensor\.[a-z0-9_]+$/.test(config[key]))) {
+      const selected = config[key];
+      const entities = typeof selected === "string" ? [selected] : Array.isArray(selected) ? selected : selected == null || selected === "" ? [] : null;
+      if (entities === null || entities.some((entity) => typeof entity !== "string" || !/^sensor\.[a-z0-9_]+$/.test(entity))) {
         throw new Error("Bitte Sensoren auswählen");
       }
     }
@@ -215,18 +262,27 @@ class PowermeshEnergyCard extends HTMLElement {
 
   render() {
     if (!this._config || !this._hass) return;
-    const focusedRole = this.shadowRoot.activeElement?.dataset.role;
+    const focusedRole = this.shadowRoot.activeElement?.dataset.key;
     this.shadowRoot.querySelector("h2").textContent = this._config.title || "Powermesh Energie";
     const configured = this._hass.states[this._config.entity]?.attributes?.roles || {};
-    const sources = roles.slice(0, 3).map(([role, label, , color]) => ({ role, label, color, entity: this._config[role] || configured[role] }))
-      .filter((source) => source.entity && this._hass.states[source.entity]);
+    const sources = roles.filter(([role]) => role !== "battery_soc").flatMap(([role, label, , color]) =>
+      roleEntities(this._config, configured, role).map((entity) => {
+        const state = this._hass.states[entity];
+        return { role, label: `${label}: ${state?.attributes?.friendly_name || entity}`, color, entity };
+      }),
+    ).filter((source) => this._hass.states[source.entity]);
     if (this._config.show_history && sources.length) this._loadPowerHistory(sources);
-    const children = configuredEnergyRoles(this._config, configured).map(([role, label, icon, color]) => {
-      const entity = this._config[role] || configured[role];
-      const state = this._hass.states[entity];
-      const result = entity ? sourceValue(state, role, Date.now(), this._config.stale_after ?? 15) : { value: null, status: "Nicht gewählt" };
+    const children = configuredEnergyRoles(this._config, configured).flatMap(([role, label, icon, color]) => {
+      const entities = roleEntities(this._config, configured, role);
+      const grouped = this._config.sum_by_area && role !== "battery_soc" || this._config.average_battery_soc && role === "battery_soc";
+      const aggregationLabel = role === "battery_soc" ? "Mittelwert" : "Summe";
+      const aggregate = role === "battery_soc" ? averagedSourceValue : summedSourceValue;
+      const groups = grouped ? [[null, aggregate(entities.map((entity) => this._hass.states[entity]), role, Date.now(), this._config.stale_after ?? 15)]] : entities.map((entity) => [entity, sourceValue(this._hass.states[entity], role, Date.now(), this._config.stale_after ?? 15)]);
+      return groups.map(([entity, result], index) => {
+      const state = entity ? this._hass.states[entity] : null;
       const metric = document.createElement(state ? "button" : "div");
-      metric.dataset.role = role;
+      const key = entity || `${role}:sum`;
+      metric.dataset.key = key;
       metric.className = `metric${result.stale ? " stale" : ""}`;
       metric.style.setProperty("--metric-color", color);
       if (state) {
@@ -238,7 +294,10 @@ class PowermeshEnergyCard extends HTMLElement {
       heading.className = "label";
       const symbol = document.createElement("ha-icon");
       symbol.setAttribute("icon", icon);
-      heading.append(symbol, document.createTextNode(label));
+      heading.append(symbol, document.createTextNode(grouped ? `${label} · ${aggregationLabel}` : label));
+      const sourceName = document.createElement("span");
+      sourceName.className = "source-name";
+      sourceName.textContent = grouped ? `${entities.length} Sensoren` : state?.attributes?.friendly_name || entity;
       const value = document.createElement("span");
       value.className = "number";
       value.textContent = result.value == null ? "–" : new Intl.NumberFormat(this._hass.locale?.language || "de", { maximumFractionDigits: result.unit === "kW" ? 2 : 0 }).format(result.value);
@@ -249,14 +308,15 @@ class PowermeshEnergyCard extends HTMLElement {
       const status = document.createElement("span");
       status.className = "status";
       status.textContent = result.status;
-      metric.append(heading, value, status);
+      metric.append(heading, sourceName, value, status);
       return metric;
+      });
     });
     this.shadowRoot.querySelector(".values").replaceChildren(...children);
     const history = this.shadowRoot.querySelector(".history");
     history.replaceChildren();
     if (this._config.show_history) history.append(this._renderPowerHistory(sources, this._hass.locale?.language || "de"));
-    if (focusedRole) this.shadowRoot.querySelector(`button[data-role="${focusedRole}"]`)?.focus({ preventScroll: true });
+    if (focusedRole) [...this.shadowRoot.querySelectorAll("button.metric")].find((metric) => metric.dataset.key === focusedRole)?.focus({ preventScroll: true });
   }
 }
 
@@ -268,14 +328,16 @@ class PowermeshEnergyCardEditor extends HTMLElement {
     this._form.schema = [
       { name: "title", selector: { text: {} } },
       { name: "entity", selector: { entity: { domain: "sensor" } } },
-      ...roles.map(([role]) => ({ name: role, selector: { entity: { domain: "sensor" } } })),
+      ...roles.map(([role]) => ({ name: role, selector: { entity: { domain: "sensor", multiple: true } } })),
       { name: "stale_after", selector: { number: { min: 1, max: 1440, mode: "box", unit_of_measurement: "min" } } },
+      { name: "sum_by_area", selector: { boolean: {} } },
+      { name: "average_battery_soc", selector: { boolean: {} } },
       { name: "show_history", selector: { boolean: {} } },
       { name: "history_hours", selector: { number: { min: 1, max: 48, mode: "box", unit_of_measurement: "h" } } },
       { name: "smoothing_minutes", selector: { number: { min: 0, max: 60, mode: "box", unit_of_measurement: "min" } } },
     ];
     this._form.computeLabel = ({ name }) => ({
-      title: "Titel", entity: "Lokale Energieübersicht", stale_after: "Veraltet nach",
+      title: "Titel", entity: "Lokale Energieübersicht", stale_after: "Veraltet nach", sum_by_area: "Leistung je Bereich summieren", average_battery_soc: "Akkustände mitteln",
       show_history: "Leistungsverlauf anzeigen", history_hours: "Verlaufszeitraum", smoothing_minutes: "Glättung (0 = aus)",
     })[name] || roles.find(([role]) => role === name)?.[1] || name;
     this._form.addEventListener("value-changed", (event) => {
@@ -285,7 +347,14 @@ class PowermeshEnergyCardEditor extends HTMLElement {
     });
     this.shadowRoot.append(this._form);
   }
-  setConfig(config) { this._config = { show_history: false, history_hours: 6, smoothing_minutes: 0, ...config }; this._form.data = this._config; }
+  setConfig(config) {
+    const rolesConfig = Object.fromEntries(roles.flatMap(([role]) => {
+      const selected = config[role];
+      return selected == null ? [] : [[role, typeof selected === "string" ? [selected] : selected]];
+    }));
+    this._config = { show_history: false, history_hours: 6, smoothing_minutes: 0, sum_by_area: false, average_battery_soc: false, ...config, ...rolesConfig };
+    this._form.data = this._config;
+  }
   set hass(hass) { this._form.hass = hass; }
 }
 
