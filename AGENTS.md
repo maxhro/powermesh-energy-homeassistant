@@ -2,7 +2,7 @@
 
 ## Current baseline
 
-- Version `0.9.3` prototype: local anomaly monitoring (`monitor.py`,
+- Version `0.9.4` prototype: local anomaly monitoring (`monitor.py`,
   `monitor_flow.py`). Owner-confirmed sensors (max 50) suggested from areas,
   labels and devices: learned EWMA normal range for power/temperature/humidity,
   counter glitch/decrease checks for `total_increasing` energy, no-data checks,
@@ -17,7 +17,7 @@
   abort; existing cloud entries load without uploader, keep key and buffer and
   show a repair issue. Retained cloud tests enable the flag via the
   `cloud_transfer` fixture. When re-enabled it requires service API release
-  `0.4.0`: selected numeric
+  `0.4.1`: selected numeric
   sensor readings, optional allowlisted Home Assistant metadata, smoothing and
   bounded offline buffering for powermesh.de.
   New website-paired cloud entries use an explicit snapshot mode: one current

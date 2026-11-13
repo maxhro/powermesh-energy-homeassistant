@@ -327,8 +327,20 @@ class PowermeshEnergyCardEditor extends HTMLElement {
     this._form = document.createElement("ha-form");
     this._form.schema = [
       { name: "title", selector: { text: {} } },
-      { name: "entity", selector: { entity: { domain: "sensor" } } },
-      ...roles.map(([role]) => ({ name: role, selector: { entity: { domain: "sensor", multiple: true } } })),
+      { name: "entity", selector: { entity: { domain: "sensor", integration: "powermesh_energy" } } },
+      ...roles.map(([role]) => ({
+        name: role,
+        selector: {
+          entity: {
+            multiple: true,
+            filter: [{
+              domain: "sensor",
+              device_class: role === "battery_soc" ? ["battery"] : ["power"],
+              unit_of_measurement: role === "battery_soc" ? ["%"] : ["W", "kW"],
+            }],
+          },
+        },
+      })),
       { name: "stale_after", selector: { number: { min: 1, max: 1440, mode: "box", unit_of_measurement: "min" } } },
       { name: "sum_by_area", selector: { boolean: {} } },
       { name: "average_battery_soc", selector: { boolean: {} } },
