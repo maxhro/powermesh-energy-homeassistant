@@ -60,6 +60,35 @@ export function sourceValue(state, role, now, staleMinutes = 15) {
   };
 }
 
+export function signedPowerValue(state, negativeDirection, positiveDirection, negativeIsNegative, now, staleMinutes = 15) {
+  if (!state || ["unknown", "unavailable"].includes(state.state)) {
+    return { value: null, status: "Nicht verfügbar" };
+  }
+  const unit = state.attributes?.unit_of_measurement;
+  if (!["W", "kW"].includes(unit)) return { value: null, status: "Einheit prüfen" };
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(state.state)) {
+    return { value: null, status: "Wert ungültig" };
+  }
+  const numeric = Number(state.state);
+  if (!Number.isFinite(numeric)) return { value: null, status: "Wert ungültig" };
+  const stamp = Date.parse(state.last_reported ?? state.last_updated);
+  if (!Number.isFinite(stamp) || stamp > now + 60000) return { value: null, status: "Zeitpunkt unklar" };
+  const age = Math.max(0, Math.floor((now - stamp) / 60000));
+  const watts = Math.abs(numeric) * (unit === "kW" ? 1000 : 1);
+  if (!Number.isFinite(watts)) return { value: null, status: "Wert ungültig" };
+  const direction = numeric === 0
+    ? "Ausgeglichen"
+    : (numeric < 0) === negativeIsNegative ? negativeDirection : positiveDirection;
+  const stale = age >= staleMinutes;
+  return {
+    value: watts >= 1000 ? watts / 1000 : watts,
+    unit: watts >= 1000 ? "kW" : "W",
+    direction,
+    stale,
+    status: `${direction}${stale ? ` · Veraltet · ${age} min` : age ? ` · Vor ${age} min` : " · Gerade aktualisiert"}`,
+  };
+}
+
 export function summedSourceValue(states, role, now, staleMinutes = 15) {
   const results = states.map((state) => sourceValue(state, role, now, staleMinutes));
   const available = results.filter((result) => result.value != null);
@@ -151,6 +180,12 @@ class PowermeshEnergyCard extends HTMLElement {
         throw new Error("Bitte Sensoren auswählen");
       }
     }
+    for (const key of ["grid_power_entity", "battery_power_entity"]) {
+      const entity = config[key];
+      if (entity != null && entity !== "" && (typeof entity !== "string" || !/^sensor\.[a-z0-9_]+$/.test(entity))) {
+        throw new Error("Bitte einen Leistungssensor auswählen");
+      }
+    }
     if (config.title != null && (typeof config.title !== "string" || config.title.length > 120)) throw new Error("Titel ungültig");
     if (config.stale_after != null && (!Number.isInteger(config.stale_after) || config.stale_after < 1 || config.stale_after > 1440)) {
       throw new Error("Datenalter: 1 bis 1440 Minuten");
@@ -224,7 +259,12 @@ class PowermeshEnergyCard extends HTMLElement {
       const unit = state?.attributes?.unit_of_measurement;
       const entries = Array.isArray(this._powerHistory.result?.[source.entity]) ? this._powerHistory.result[source.entity] : [];
       const points = entries.map((item) => {
-        const value = numericState(item.s ?? item.state);
+        const rawValue = numericState(item.s ?? item.state);
+        const value = source.signedDirection === "positive"
+          ? rawValue >= 0 ? rawValue : NaN
+          : source.signedDirection === "negative"
+            ? rawValue < 0 ? Math.abs(rawValue) : NaN
+            : rawValue;
         return [Number(item.lu ?? item.lc ?? Date.parse(item.last_updated ?? item.last_changed) / 1000), value >= 0 ? value : NaN];
       });
       return { ...source, unit, points };
@@ -265,14 +305,35 @@ class PowermeshEnergyCard extends HTMLElement {
     const focusedRole = this.shadowRoot.activeElement?.dataset.key;
     this.shadowRoot.querySelector("h2").textContent = this._config.title || "Powermesh Energie";
     const configured = this._hass.states[this._config.entity]?.attributes?.roles || {};
-    const sources = roles.filter(([role]) => role !== "battery_soc").flatMap(([role, label, , color]) =>
+    const combinedGrid = Boolean(this._config.grid_power_entity);
+    const sources = roles.filter(([role]) => role !== "battery_soc" && !(combinedGrid && ["grid_import_power", "grid_export_power"].includes(role))).flatMap(([role, label, , color]) =>
       roleEntities(this._config, configured, role).map((entity) => {
         const state = this._hass.states[entity];
         return { role, label: `${label}: ${state?.attributes?.friendly_name || entity}`, color, entity };
       }),
     ).filter((source) => this._hass.states[source.entity]);
+    if (combinedGrid && this._hass.states[this._config.grid_power_entity]) {
+      const entity = this._config.grid_power_entity;
+      const name = this._hass.states[entity].attributes?.friendly_name || entity;
+      const negativeIsExport = this._config.grid_negative_is_export ?? true;
+      sources.push(
+        { role: "grid_import_power", label: `Netzbezug: ${name}`, color: "#22766d", entity, signedDirection: negativeIsExport ? "positive" : "negative" },
+        { role: "grid_export_power", label: `Einspeisung: ${name}`, color: "#b34f55", entity, signedDirection: negativeIsExport ? "negative" : "positive" },
+      );
+    }
+    if (this._config.battery_power_entity && this._hass.states[this._config.battery_power_entity]) {
+      const entity = this._config.battery_power_entity;
+      const name = this._hass.states[entity].attributes?.friendly_name || entity;
+      const negativeIsDischarge = this._config.battery_negative_is_discharge ?? true;
+      sources.push(
+        { role: "battery_charge_power", label: `Laden: ${name}`, color: "#427a3b", entity, signedDirection: negativeIsDischarge ? "positive" : "negative" },
+        { role: "battery_discharge_power", label: `Entladen: ${name}`, color: "#5974a5", entity, signedDirection: negativeIsDischarge ? "negative" : "positive" },
+      );
+    }
     if (this._config.show_history && sources.length) this._loadPowerHistory(sources);
-    const children = configuredEnergyRoles(this._config, configured).flatMap(([role, label, icon, color]) => {
+    const children = configuredEnergyRoles(this._config, configured)
+      .filter(([role]) => !(combinedGrid && ["grid_import_power", "grid_export_power"].includes(role)))
+      .flatMap(([role, label, icon, color]) => {
       const entities = roleEntities(this._config, configured, role);
       const grouped = this._config.sum_by_area && role !== "battery_soc" || this._config.average_battery_soc && role === "battery_soc";
       const aggregationLabel = role === "battery_soc" ? "Mittelwert" : "Summe";
@@ -312,6 +373,65 @@ class PowermeshEnergyCard extends HTMLElement {
       return metric;
       });
     });
+    const signedMetric = ({ entity, key, label, icon, color, negativeDirection, positiveDirection, negativeIsNegative }) => {
+      const state = this._hass.states[entity];
+      const result = state
+        ? signedPowerValue(state, negativeDirection, positiveDirection, negativeIsNegative, Date.now(), this._config.stale_after ?? 15)
+        : { value: null, status: "Nicht verfügbar" };
+      const metric = document.createElement(state ? "button" : "div");
+      metric.dataset.key = key;
+      metric.className = `metric${result.stale ? " stale" : ""}`;
+      metric.style.setProperty("--metric-color", color);
+      if (state) {
+        metric.type = "button";
+        metric.title = `${label}: ${state.attributes?.friendly_name || entity}`;
+        metric.addEventListener("click", () => this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: entity }, bubbles: true, composed: true })));
+      }
+      const heading = document.createElement("span");
+      heading.className = "label";
+      const symbol = document.createElement("ha-icon");
+      symbol.setAttribute("icon", icon);
+      heading.append(symbol, document.createTextNode(label));
+      const sourceName = document.createElement("span");
+      sourceName.className = "source-name";
+      sourceName.textContent = state?.attributes?.friendly_name || entity;
+      const value = document.createElement("span");
+      value.className = "number";
+      value.textContent = result.value == null ? "–" : new Intl.NumberFormat(this._hass.locale?.language || "de", { maximumFractionDigits: result.unit === "kW" ? 2 : 0 }).format(result.value);
+      const unit = document.createElement("span");
+      unit.className = "unit";
+      unit.textContent = result.unit || "";
+      value.append(unit);
+      const status = document.createElement("span");
+      status.className = "status";
+      status.textContent = result.status;
+      metric.append(heading, sourceName, value, status);
+      return metric;
+    };
+    if (this._config.grid_power_entity) {
+      children.push(signedMetric({
+        entity: this._config.grid_power_entity,
+        key: "grid_power_entity",
+        label: "Kombinierter Netzfluss",
+        icon: "mdi:transmission-tower",
+        color: "#22766d",
+        negativeDirection: "Einspeisung",
+        positiveDirection: "Netzbezug",
+        negativeIsNegative: this._config.grid_negative_is_export ?? true,
+      }));
+    }
+    if (this._config.battery_power_entity) {
+      children.push(signedMetric({
+        entity: this._config.battery_power_entity,
+        key: "battery_power_entity",
+        label: "Batterieleistung",
+        icon: "mdi:battery-charging",
+        color: "#5974a5",
+        negativeDirection: "Entladen",
+        positiveDirection: "Laden",
+        negativeIsNegative: this._config.battery_negative_is_discharge ?? true,
+      }));
+    }
     this.shadowRoot.querySelector(".values").replaceChildren(...children);
     const history = this.shadowRoot.querySelector(".history");
     history.replaceChildren();
@@ -341,15 +461,27 @@ class PowermeshEnergyCardEditor extends HTMLElement {
           },
         },
       })),
+      ...["grid_power_entity", "battery_power_entity"].map((name) => ({
+        name,
+        selector: {
+          entity: {
+            filter: [{ domain: "sensor", device_class: ["power"], unit_of_measurement: ["W", "kW"] }],
+          },
+        },
+      })),
       { name: "stale_after", selector: { number: { min: 1, max: 1440, mode: "box", unit_of_measurement: "min" } } },
       { name: "sum_by_area", selector: { boolean: {} } },
       { name: "average_battery_soc", selector: { boolean: {} } },
+      { name: "grid_negative_is_export", selector: { boolean: {} } },
+      { name: "battery_negative_is_discharge", selector: { boolean: {} } },
       { name: "show_history", selector: { boolean: {} } },
       { name: "history_hours", selector: { number: { min: 1, max: 48, mode: "box", unit_of_measurement: "h" } } },
       { name: "smoothing_minutes", selector: { number: { min: 0, max: 60, mode: "box", unit_of_measurement: "min" } } },
     ];
     this._form.computeLabel = ({ name }) => ({
       title: "Titel", entity: "Lokale Energieübersicht", stale_after: "Veraltet nach", sum_by_area: "Leistung je Bereich summieren", average_battery_soc: "Akkustände mitteln",
+      grid_power_entity: "Kombinierter Netzsensor (ersetzt getrennte Sensoren)", grid_negative_is_export: "Negative Netzwerte bedeuten Einspeisung",
+      battery_power_entity: "Batterieleistung (Laden/Entladen)", battery_negative_is_discharge: "Negative Batteriewerte bedeuten Entladen",
       show_history: "Leistungsverlauf anzeigen", history_hours: "Verlaufszeitraum", smoothing_minutes: "Glättung (0 = aus)",
     })[name] || roles.find(([role]) => role === name)?.[1] || name;
     this._form.addEventListener("value-changed", (event) => {
@@ -364,7 +496,7 @@ class PowermeshEnergyCardEditor extends HTMLElement {
       const selected = config[role];
       return selected == null ? [] : [[role, typeof selected === "string" ? [selected] : selected]];
     }));
-    this._config = { show_history: false, history_hours: 6, smoothing_minutes: 0, sum_by_area: false, average_battery_soc: false, ...config, ...rolesConfig };
+    this._config = { show_history: false, history_hours: 6, smoothing_minutes: 0, sum_by_area: false, average_battery_soc: false, grid_negative_is_export: true, battery_negative_is_discharge: true, ...config, ...rolesConfig };
     this._form.data = this._config;
   }
   set hass(hass) { this._form.hass = hass; }
@@ -563,7 +695,7 @@ function svg(tag, attributes = {}) {
   return node;
 }
 
-const ANOMALY_DEFAULTS = { show_monitors: true, show_recent: true, show_history: false, history_hours: 6, show_learning_bar: false, show_timeline: false, timeline_days: 7 };
+const ANOMALY_DEFAULTS = { show_monitors: true, show_recent: true, show_history: false, history_hours: 6, smoothing_minutes: 5, show_learning_bar: false, show_timeline: false, timeline_days: 7 };
 const HISTORY_REFRESH_MS = 300000;
 const SPARK_WIDTH = 300;
 const SPARK_HEIGHT = 48;
@@ -634,6 +766,9 @@ class PowermeshAnomalyCard extends HTMLElement {
     if (config.history_hours != null && (!Number.isInteger(config.history_hours) || config.history_hours < 1 || config.history_hours > 48)) {
       throw new Error("Verlauf: 1 bis 48 Stunden");
     }
+    if (config.smoothing_minutes != null && (!Number.isInteger(config.smoothing_minutes) || config.smoothing_minutes < 0 || config.smoothing_minutes > 60)) {
+      throw new Error("Glättung: 0 bis 60 Minuten");
+    }
     if (config.timeline_days != null && (!Number.isInteger(config.timeline_days) || config.timeline_days < 1 || config.timeline_days > 30)) {
       throw new Error("Zeitleiste: 1 bis 30 Tage");
     }
@@ -690,11 +825,12 @@ class PowermeshAnomalyCard extends HTMLElement {
       return el("span", "spark-note", "Verlauf wird geladen …");
     }
     if (history.error) return el("span", "spark-note", "Verlauf nicht verfügbar.");
-    const geometry = sparklinePath(history.series[monitor.entity_id] || [], history.start, history.end, SPARK_WIDTH, SPARK_HEIGHT,
+    const points = smoothHistory(history.series[monitor.entity_id] || [], (this._config.smoothing_minutes ?? 0) * 60);
+    const geometry = sparklinePath(points, history.start, history.end, SPARK_WIDTH, SPARK_HEIGHT,
       monitor.kind === "baseline" ? monitor.band_low : NaN, monitor.kind === "baseline" ? monitor.band_high : NaN);
     if (!geometry) return el("span", "spark-note", "Keine Werte im Zeitraum.");
     const chart = svg("svg", { class: "spark", viewBox: `0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`, preserveAspectRatio: "none", role: "img",
-      "aria-label": `Verlauf der letzten ${this._config.history_hours} Stunden${geometry.bandTop != null ? " mit Normalbereich" : ""}` });
+      "aria-label": `Verlauf der letzten ${this._config.history_hours} Stunden${this._config.smoothing_minutes ? `, geglättet ${this._config.smoothing_minutes} min` : ""}${geometry.bandTop != null ? " mit Normalbereich" : ""}` });
     if (geometry.bandTop != null) {
       chart.append(svg("rect", { class: "spark-band", x: 0, y: geometry.bandTop, width: SPARK_WIDTH, height: Math.max(0.5, geometry.bandBottom - geometry.bandTop) }));
     }
@@ -857,12 +993,13 @@ class PowermeshAnomalyCardEditor extends HTMLElement {
       { name: "show_learning_bar", selector: { boolean: {} } },
       { name: "show_history", selector: { boolean: {} } },
       { name: "history_hours", selector: { number: { min: 1, max: 48, mode: "box", unit_of_measurement: "h" } } },
+      { name: "smoothing_minutes", selector: { number: { min: 0, max: 60, mode: "box", unit_of_measurement: "min" } } },
       { name: "show_timeline", selector: { boolean: {} } },
       { name: "timeline_days", selector: { number: { min: 1, max: 30, mode: "box", unit_of_measurement: "d" } } },
     ];
     this._form.computeLabel = ({ name }) => ({
       title: "Titel", entity: "Offene Auffälligkeiten", show_monitors: "Überwachte Sensoren zeigen", show_recent: "Beendete Auffälligkeiten zeigen",
-      show_learning_bar: "Lernfortschritt als Balken", show_history: "Verlaufsdiagramm mit Normalbereich", history_hours: "Verlaufszeitraum",
+      show_learning_bar: "Lernfortschritt als Balken", show_history: "Verlaufsdiagramm mit Normalbereich", history_hours: "Verlaufszeitraum", smoothing_minutes: "Glättung (0 = aus)",
       show_timeline: "Zeitleiste der Auffälligkeiten", timeline_days: "Zeitleistenzeitraum",
     })[name] || name;
     this._form.addEventListener("value-changed", (event) => {

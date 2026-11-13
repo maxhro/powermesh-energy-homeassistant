@@ -15,8 +15,8 @@ function fixture(t) {
   t.after(() => rmSync(work, { recursive: true }));
   copyFileSync(join(root, 'build-package.ps1'), join(work, 'build-package.ps1'));
   for (const [name, content] of Object.entries({
-    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.4"}',
-    [`${component}/const.py`]: 'VERSION: Final = "0.9.4"\n',
+    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.5"}',
+    [`${component}/const.py`]: 'VERSION: Final = "0.9.5"\n',
     [`${component}/__init__.py`]: '',
     [`${component}/translations/de.json`]: '{}',
     [`${component}/frontend/powermesh-energy-card.js`]: 'export const synthetic = true;',
@@ -60,7 +60,7 @@ test('manual-install ZIP includes exactly component sources and license without 
   assert.equal(existsSync(join(work, 'dist')), false);
   const built = run(work, '-BuildPackage');
   assert.equal(built.status, 0, built.stderr);
-  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.4.zip');
+  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.5.zip');
   assert.deepEqual(zipNames(path), [
     `${component}/__init__.py`, `${component}/const.py`, `${component}/frontend/powermesh-energy-card.js`, `${component}/manifest.json`,
     `${component}/translations/de.json`, 'LICENSE',
@@ -74,7 +74,7 @@ test('version drift, JSON secret files and links are rejected before output', (t
   const work = fixture(t);
   writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "1.0.0"\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
-  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.4"\n');
+  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.5"\n');
   const yaml = join(work, component, 'secrets.yaml');
   writeFileSync(yaml, 'token: SYNTHETIC_NEVER\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
@@ -96,7 +96,7 @@ globalThis.HTMLElement = class {};
 globalThis.customElements = { get: () => undefined, define: () => {} };
 globalThis.window = { customCards: [] };
 const cardSource = readFileSync(join(root, component, 'frontend/powermesh-energy-card.js'), 'utf8');
-const { sourceValue, roleEntities, summedSourceValue, averagedSourceValue, configuredEnergyRoles, bandGeometry, sparklinePath, timelineSegments, numericState, smoothHistory, powerHistoryGeometry } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
+const { sourceValue, signedPowerValue, roleEntities, summedSourceValue, averagedSourceValue, configuredEnergyRoles, bandGeometry, sparklinePath, timelineSegments, numericState, smoothHistory, powerHistoryGeometry } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
 const now = Date.parse('2026-11-05T12:00:00Z');
 const source = (value, unit = 'W', stamp = '2026-11-05T12:00:00Z') => ({
   state: value, attributes: { unit_of_measurement: unit }, last_updated: stamp,
@@ -124,6 +124,21 @@ test('local energy widget converts units and identifies missing, invalid, signed
   assert.match(stale.status, /Veraltet/);
 });
 
+test('combined grid and battery sensors split signed power by configured direction', () => {
+  assert.deepEqual(signedPowerValue(source('-1.25', 'kW'), 'Einspeisung', 'Netzbezug', true, now), {
+    value: 1.25, unit: 'kW', direction: 'Einspeisung', stale: false, status: 'Einspeisung · Gerade aktualisiert',
+  });
+  assert.deepEqual(signedPowerValue(source('850'), 'Einspeisung', 'Netzbezug', true, now), {
+    value: 850, unit: 'W', direction: 'Netzbezug', stale: false, status: 'Netzbezug · Gerade aktualisiert',
+  });
+  assert.deepEqual(signedPowerValue(source('-0.6', 'kW'), 'Entladen', 'Laden', false, now), {
+    value: 600, unit: 'W', direction: 'Laden', stale: false, status: 'Laden · Gerade aktualisiert',
+  });
+  assert.equal(signedPowerValue(source('0'), 'Einspeisung', 'Netzbezug', true, now).direction, 'Ausgeglichen');
+  assert.equal(signedPowerValue(source('4', '%'), 'Laden', 'Entladen', true, now).status, 'Einheit prüfen');
+  assert.equal(signedPowerValue(source('NaN'), 'Laden', 'Entladen', true, now).status, 'Wert ungültig');
+});
+
 test('energy card shows only configured roles, including unavailable sources', () => {
   assert.deepEqual(configuredEnergyRoles({}, {}).map(([role]) => role), []);
   assert.deepEqual(configuredEnergyRoles({}, { solar_power: 'sensor.solar' }).map(([role]) => role), ['solar_power']);
@@ -146,6 +161,11 @@ test('power areas can be summed across W and kW without hiding incomplete source
   assert.match(cardSource, /device_class: role === "battery_soc" \? \["battery"\] : \["power"\]/);
   assert.match(cardSource, /unit_of_measurement: role === "battery_soc" \? \["%"\] : \["W", "kW"\]/);
   assert.match(cardSource, /multiple: true/);
+  assert.match(cardSource, /\["grid_power_entity", "battery_power_entity"\]/);
+  assert.match(cardSource, /name: "grid_negative_is_export"/);
+  assert.match(cardSource, /name: "battery_negative_is_discharge"/);
+  assert.match(cardSource, /negativeIsNegative: this\._config\.grid_negative_is_export \?\? true/);
+  assert.match(cardSource, /negativeIsNegative: this\._config\.battery_negative_is_discharge \?\? true/);
 });
 
 test('battery percentages can be averaged without summing or hiding incomplete sources', () => {
@@ -204,6 +224,12 @@ test('optional history chart draws a step line with gaps and the learned band', 
   assert.equal(sparklinePath([[10, 5]], 0, 100, 100, 10).bandTop, null);
   assert.equal(numericState('12.5'), 12.5);
   for (const value of ['unavailable', 'unknown', '', '0x10', 'Infinity', null]) assert.ok(Number.isNaN(numericState(value)));
+  const raw = [[0, 0], [30, 100], [60, 0]];
+  const rawPath = sparklinePath(raw, 0, 60, 100, 50, 20, 80).path;
+  const smoothedPath = sparklinePath(smoothHistory(raw, 60), 0, 60, 100, 50, 20, 80).path;
+  assert.notEqual(smoothedPath, rawPath);
+  assert.match(cardSource, /smoothHistory\(history\.series\[monitor\.entity_id\] \|\| \[\]/);
+  assert.match(cardSource, /name: "smoothing_minutes", selector: \{ number: \{ min: 0, max: 60/);
 });
 
 test('optional timeline positions findings in the window and keeps open findings until now', () => {

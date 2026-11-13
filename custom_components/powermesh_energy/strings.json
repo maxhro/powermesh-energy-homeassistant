@@ -24,7 +24,7 @@
       },
       "monitor": {
         "title": "Anomaly detection: structure",
-        "description": "Powermesh suggests suitable sensors from your areas, labels and devices: power, temperature and humidity get a learned normal range; energy meters are checked for jumps and decreases. Optionally limit the suggestions. All evaluation runs locally.",
+        "description": "Powermesh suggests suitable sensors from your areas, labels and devices: power, temperature and humidity get a learned normal range; energy meters are checked for jumps and decreases. Optionally limit the suggestions. All evaluation runs locally. After completing setup, refresh the Home Assistant page in your browser so the dashboard cards load.",
         "data": {"areas": "Areas", "labels": "Labels"},
         "data_description": {"areas": "Empty: all areas.", "labels": "Empty: all labels."}
       },
@@ -42,7 +42,7 @@
       },
       "local": {
         "title": "Local energy overview",
-        "description": "Select one or more sources per area. Solar, grid and consumer power: W/kW. Battery charge: %. Grid import and export need separate one-way sources. No readings are transferred.",
+        "description": "Select one or more sources per area. Solar, grid and consumer power: W/kW. Battery charge: %. Grid import and export need separate one-way sources. No readings are transferred. After completing setup, refresh the Home Assistant page in your browser so the dashboard cards load.",
         "data": {"solar_power": "Solar power", "grid_import_power": "Grid import", "grid_export_power": "Grid export", "battery_soc": "Battery charge", "consumer_power": "Consumer power"}
       },
       "api_key": {
