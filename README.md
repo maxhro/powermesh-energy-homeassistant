@@ -73,6 +73,10 @@ Der Button öffnet das Repository im Marketplace (bzw. in HACS). Alternativ von 
 3. „Powermesh Energie“ herunterladen und Home Assistant neu starten.
 4. **Einstellungen → Geräte & Dienste → Integration hinzufügen → Powermesh Energie**
 
+Nach Abschluss der Einrichtung und nach einem Update die Home-Assistant-Seite
+im Browser einmal neu laden, damit die Dashboard-Karten verfügbar sind. Ein
+HA-Neustart aktualisiert eine offene Browser-Sitzung nicht immer automatisch.
+
 Home Assistant bis 2026.10: HACS öffnen → Menü (⋮) → **Benutzerdefinierte
 Repositories** → Repository wie oben als **Integration** hinzufügen, dann
 Schritte 3 und 4.
@@ -156,6 +160,7 @@ Optional im Karteneditor zuschaltbar (standardmäßig aus):
 |---|---|
 | `show_learning_bar` | Lernfortschritt als Balken |
 | `show_history`, `history_hours` (1–48, Standard 6) | Verlaufsdiagramm je Sensor mit eingezeichnetem Normalbereich; liest nur die vorhandene HA-Historie |
+| `smoothing_minutes` (0–60, Standard 5) | Zeitgewichtete Glättung nur für die Diagrammanzeige; `0` zeigt die Rohkurve. Sensorwerte, Recorder und Anomalieerkennung bleiben unverändert. |
 | `show_timeline`, `timeline_days` (1–30, Standard 7) | Zeitleiste offener und beendeter Auffälligkeiten, getrennt nach Verhalten und Datenqualität |
 
 **Powermesh Energie** zeigt die Quellen der lokalen Energieübersicht. Die
@@ -174,6 +179,8 @@ Optional im Karteneditor zuschaltbar (standardmäßig aus):
 |---|---|
 | `sum_by_area` | Leistungsquellen eines Bereichs als Summe anzeigen; bei unvollständigen Quellen wird keine Teilsumme ausgegeben. |
 | `average_battery_soc` | Mehrere Akkustände als Mittelwert anzeigen; bei unvollständigen Quellen wird kein Teilmittelwert ausgegeben. |
+| `grid_power_entity` | Optionaler kombinierter Netzsensor mit Vorzeichenwechsel. Er ersetzt getrennte Netzbezugs-/Einspeisesensoren. `grid_negative_is_export` legt fest, ob negative Werte Einspeisung bedeuten (Standard: ja). |
+| `battery_power_entity` | Optionaler kombinierter Batterieleistungssensor. `battery_negative_is_discharge` legt fest, ob negative Werte Entladen bedeuten (Standard: ja). |
 | `show_history` | Leistungsverlauf für ausgewählte Solar-, Netzbezugs- und Einspeisesensoren mit Raster, Zeitachse und Legende. Liest die vorhandene HA-Historie; der Akkustand wird nicht mit Leistung vermischt. |
 | `history_hours` (1–48, Standard 6) | Zeitraum des Diagramms |
 | `smoothing_minutes` (0–60, Standard 0) | Zeitgewichtete Glättung nur für die Diagrammanzeige; `0` zeigt die Rohkurve. Sensorwerte, Recorder und Anomalieerkennung bleiben unverändert. |
@@ -199,7 +206,7 @@ Version installieren und Home Assistant danach neu starten.
 
 ## Versionen
 
-Diese Integration ist ein Prototyp in Version **0.9.4**. Sie wird unabhängig von
+Diese Integration ist ein Prototyp in Version **0.9.5**. Sie wird unabhängig von
 der Website powermesh.de versioniert und benötigt keinen Dienst.
 
 ## Lokale Tests
@@ -213,7 +220,7 @@ pwsh -NoProfile -File ./build-package.ps1 -DryRun
 pwsh -NoProfile -File ./build-package.ps1 -BuildPackage
 ```
 
-Das Archiv `dist/powermesh-energy-homeassistant-0.9.4.zip` enthält
+Das Archiv `dist/powermesh-energy-homeassistant-0.9.5.zip` enthält
 `custom_components/powermesh_energy` und die Lizenz, keine Testumgebung, Caches
 oder Zugangsdaten. Vorhandene Archive werden nicht überschrieben.
 Den enthaltenen Komponentenordner in das Konfigurationsverzeichnis von

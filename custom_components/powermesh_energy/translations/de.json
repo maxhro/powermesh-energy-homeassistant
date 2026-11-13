@@ -24,7 +24,7 @@
       },
       "monitor": {
         "title": "Auffälligkeiten: Struktur",
-        "description": "Powermesh schlägt passende Sensoren aus deinen Bereichen, Labels und Geräten vor: Leistung, Temperatur und Luftfeuchte erhalten einen gelernten Normalbereich; Energiezähler werden auf Sprünge und Rückgänge geprüft. Optional kannst du die Vorschläge eingrenzen. Die Auswertung läuft vollständig lokal.",
+        "description": "Powermesh schlägt passende Sensoren aus deinen Bereichen, Labels und Geräten vor: Leistung, Temperatur und Luftfeuchte erhalten einen gelernten Normalbereich; Energiezähler werden auf Sprünge und Rückgänge geprüft. Optional kannst du die Vorschläge eingrenzen. Die Auswertung läuft vollständig lokal. Lade nach Abschluss der Einrichtung die Home-Assistant-Seite im Browser neu, damit die Dashboard-Karten geladen werden.",
         "data": {"areas": "Bereiche", "labels": "Labels"},
         "data_description": {"areas": "Leer: alle Bereiche.", "labels": "Leer: alle Labels."}
       },
@@ -42,7 +42,7 @@
       },
       "local": {
         "title": "Lokale Energieübersicht",
-        "description": "Wähle mindestens eine Quelle pro Bereich. Solar, Netz und Verbrauch: W/kW. Akkustand: %. Netzbezug und Einspeisung benötigen getrennte, einseitige Quellen. Es werden keine Messwerte übertragen.",
+        "description": "Wähle mindestens eine Quelle pro Bereich. Solar, Netz und Verbrauch: W/kW. Akkustand: %. Netzbezug und Einspeisung benötigen getrennte, einseitige Quellen. Es werden keine Messwerte übertragen. Lade nach Abschluss der Einrichtung die Home-Assistant-Seite im Browser neu, damit die Dashboard-Karten geladen werden.",
         "data": {"solar_power": "Solarleistung", "grid_import_power": "Netzbezug", "grid_export_power": "Einspeisung", "battery_soc": "Akkustand", "consumer_power": "Leistungsverbraucher"}
       },
       "api_key": {
