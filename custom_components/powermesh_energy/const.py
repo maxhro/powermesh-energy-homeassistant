@@ -7,12 +7,12 @@ from typing import Final
 
 DOMAIN: Final = "powermesh_energy"
 # Keep in sync with manifest.json.
-VERSION: Final = "0.9.3"
+VERSION: Final = "0.9.4"
 # The powermesh.de REST transfer stays in the code base but is not offered or started.
 CLOUD_TRANSFER_ENABLED: Final = False
-API_RELEASE: Final = "0.4.0"
+API_RELEASE: Final = "0.4.1"
 API_MAJOR: Final = 2
-# Website-issued pairing codes require service release 0.4.0.
+# Website-issued pairing codes require service release 0.4.1.
 MIN_API_RELEASE: Final = API_RELEASE
 CLIENT_ID: Final = f"homeassistant/{VERSION}"
 DEFAULT_URL: Final = "https://api.powermesh.de"
@@ -30,8 +30,8 @@ PAIRING_URL: Final = "https://powermesh.de/?r=register&ha=1"
 PAIRING_STORE: Final = f"{DOMAIN}.pending_pairing"
 
 REGISTRATION_PATH: Final = "/api/v2/register"
-REGISTRATION_CONSENT_VERSION: Final = "2026-11-05-ha-registration-v2"
-ENERGY_CONSENT_VERSION: Final = "2026-10-26-rest-metadata-0.1.0"
+REGISTRATION_CONSENT_VERSION: Final = "2026-11-13-ha-registration-v3"
+ENERGY_CONSENT_VERSION: Final = "2026-11-13-rest-metadata-0.1.1"
 ACCOUNT_SETUP_HOURS: Final = 168
 PRIVACY_URL: Final = "https://powermesh.de/?r=security"
 TERMS_URL: Final = "https://powermesh.de/?r=terms"

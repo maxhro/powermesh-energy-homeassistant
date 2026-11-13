@@ -101,8 +101,8 @@ async def register(session):
 
 
 def test_registration_targets_new_api_release():
-    assert API_RELEASE == MIN_API_RELEASE == "0.4.0"
-    assert CLIENT_ID == "homeassistant/0.9.3"
+    assert API_RELEASE == MIN_API_RELEASE == "0.4.1"
+    assert CLIENT_ID == "homeassistant/0.9.4"
 
 
 async def test_register_sends_exact_fields_once_to_fixed_service_without_auth():
@@ -122,7 +122,7 @@ async def test_register_sends_exact_fields_once_to_fixed_service_without_auth():
         "consent_version": REGISTRATION_CONSENT_VERSION,
         "consent_privacy": True,
         "consent_terms": True,
-        "energy_consent_version": "2026-10-26-rest-metadata-0.1.0",
+        "energy_consent_version": "2026-11-13-rest-metadata-0.1.1",
         "energy_consent": True,
     }
     assert result.api_key == API_KEY
