@@ -97,6 +97,17 @@ Home-Assistant-Integrationen werden davon nicht geändert.
    „Alle auswählen“ und „Keine auswählen“ wirken nur auf die angezeigten Sensoren.
 3. Empfindlichkeit (niedrig, mittel, hoch) und Benachrichtigungen wählen.
 
+Die folgenden Abbildungen zeigen die Konfiguration mit synthetischen Testdaten;
+der Einrichtungsdialog verwendet dieselben Schritte.
+
+![Bereiche und Labels eingrenzen](docs/screenshots/einrichtung-struktur.png)
+
+![Sensoren nach Suchbegriff und Typ filtern](docs/screenshots/einrichtung-sensoren.png)
+
+![Überwachte Sensoren auswählen](docs/screenshots/einrichtung-sensorauswahl.png)
+
+![Empfindlichkeit und Benachrichtigungen wählen](docs/screenshots/einrichtung-benachrichtigungen.png)
+
 Auswahl und Einstellungen lassen sich unter **Konfigurieren** ändern. Bei
 geänderter Einheit beginnt das Lernen für diesen Sensor neu; entfernte Sensoren
 verlieren ihren Lernstand.
@@ -115,6 +126,8 @@ Meldung unbestätigt ist, und eignet sich als Auslöser eigener Automationen.
    ein vorzeichenbehafteter gemeinsamer Netzsensor wird nicht automatisch geteilt.
 3. Speichern. Quellen lassen sich unter **Konfigurieren** ändern oder entfernen.
 
+![Quellen der lokalen Energieübersicht konfigurieren](docs/screenshots/einrichtung-energie.png)
+
 ### Dashboard-Karten
 
 Beide Karten liegen in derselben Datei, die die Integration lokal in HA
@@ -127,6 +140,8 @@ Hand hinzugefügt, kann sie dort entfernt werden.
 **Powermesh Auffälligkeiten** zeigt offene Meldungen mit
 **Bestätigen**-Schaltfläche, je Sensor Status, aktuellen Wert, Normalbereich als
 Balken und Lernfortschritt sowie zuletzt beendete Meldungen:
+
+![Karte Powermesh Auffälligkeiten mit synthetischen Sensoren](docs/screenshots/auffaelligkeiten-karte.png)
 
 ```yaml
 type: custom:powermesh-anomaly-card
@@ -141,15 +156,31 @@ Optional im Karteneditor zuschaltbar (standardmäßig aus):
 | `show_history`, `history_hours` (1–48, Standard 6) | Verlaufsdiagramm je Sensor mit eingezeichnetem Normalbereich; liest nur die vorhandene HA-Historie |
 | `show_timeline`, `timeline_days` (1–30, Standard 7) | Zeitleiste offener und beendeter Auffälligkeiten, getrennt nach Verhalten und Datenqualität |
 
-**Powermesh Energie** zeigt die Quellen der lokalen Energieübersicht. Fehlende
-Quellen, ungeeignete Einheiten, negative einseitige Leistung und ungültiger
-Akkustand werden ausdrücklich angezeigt. Nach standardmäßig 15 Minuten ohne
-Aktualisierung wird der letzte Wert als **Veraltet** markiert (im Karteneditor
-änderbar). Keine Verbrauchsbilanz, Tagesaggregation, Sparprognose oder Steuerung.
+**Powermesh Energie** zeigt die Quellen der lokalen Energieübersicht. Die
+Leistungs-Kacheln sind einheitlich ausgerichtet. Fehlende Quellen, ungeeignete
+Einheiten, negative einseitige Leistung und ungültiger Akkustand werden bei
+konfigurierten Quellen ausdrücklich angezeigt; nicht zugeordnete Quellen werden
+ausgeblendet. Nach standardmäßig 15 Minuten ohne Aktualisierung wird
+der letzte Wert als **Veraltet** markiert (im Karteneditor änderbar).
+
+![Karte Powermesh Energie mit synthetischen Sensoren und Leistungsverlauf](docs/screenshots/energie-karte.png)
+
+Optional im Karteneditor zuschaltbar (standardmäßig aus):
+
+| Option | Wirkung |
+|---|---|
+| `show_history` | Leistungsverlauf für ausgewählte Solar-, Netzbezugs- und Einspeisesensoren mit Raster, Zeitachse und Legende. Liest die vorhandene HA-Historie; der Akkustand wird nicht mit Leistung vermischt. |
+| `history_hours` (1–48, Standard 6) | Zeitraum des Diagramms |
+| `smoothing_minutes` (0–60, Standard 0) | Zeitgewichtete Glättung nur für die Diagrammanzeige; `0` zeigt die Rohkurve. Sensorwerte, Recorder und Anomalieerkennung bleiben unverändert. |
+
+Keine Verbrauchsbilanz, Tagesaggregation, Sparprognose oder Steuerung.
 
 ```yaml
 type: custom:powermesh-energy-card
 entity: sensor.powermesh_energie_energieubersicht
+show_history: true
+history_hours: 6
+smoothing_minutes: 5
 ```
 
 Jeweils den tatsächlichen Entitätsnamen aus HA verwenden. Anklicken eines
@@ -163,7 +194,7 @@ Version installieren und Home Assistant danach neu starten.
 
 ## Versionen
 
-Diese Integration ist ein Prototyp in Version **0.9.1**. Sie wird unabhängig von
+Diese Integration ist ein Prototyp in Version **0.9.2**. Sie wird unabhängig von
 der Website powermesh.de versioniert und benötigt keinen Dienst.
 
 ## Lokale Tests
@@ -177,7 +208,7 @@ pwsh -NoProfile -File ./build-package.ps1 -DryRun
 pwsh -NoProfile -File ./build-package.ps1 -BuildPackage
 ```
 
-Das Archiv `dist/powermesh-energy-homeassistant-0.9.1.zip` enthält
+Das Archiv `dist/powermesh-energy-homeassistant-0.9.2.zip` enthält
 `custom_components/powermesh_energy` und die Lizenz, keine Testumgebung, Caches
 oder Zugangsdaten. Vorhandene Archive werden nicht überschrieben.
 Den enthaltenen Komponentenordner in das Konfigurationsverzeichnis von

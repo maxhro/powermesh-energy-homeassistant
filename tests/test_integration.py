@@ -113,13 +113,13 @@ async def test_local_entry_setup_options_diagnostics_and_removal(hass):
         assert entry.runtime_data is None
         client.assert_not_called()
         assert resources.call_args.args[0][0].url_path == CARD_URL
-        extra_js.assert_called_once_with(hass, f"{CARD_URL}?v=0.9.1")
+        extra_js.assert_called_once_with(hass, f"{CARD_URL}?v=0.9.2")
         await async_setup_entry(hass, entry)
         assert resources.call_count == 1
         assert extra_js.call_count == 1
     sensor = PowermeshOverviewSensor(entry)
     assert sensor.extra_state_attributes == {CONF_ROLES: {"solar_power": "sensor.solar"}}
-    assert await async_get_config_entry_diagnostics(hass, entry) == {"mode": "local", "integration_version": "0.9.1"}
+    assert await async_get_config_entry_diagnostics(hass, entry) == {"mode": "local", "integration_version": "0.9.2"}
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["step_id"] == "local"
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"grid_import_power": "sensor.solar"})
@@ -129,6 +129,26 @@ async def test_local_entry_setup_options_diagnostics_and_removal(hass):
         store.assert_not_called()
     with patch.object(hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)):
         assert await async_unload_entry(hass, entry)
+
+
+async def test_parallel_entries_register_card_resource_once(hass):
+    import asyncio
+
+    from custom_components.powermesh_energy import async_setup_entry
+
+    entries = [MockConfigEntry(domain=DOMAIN, data={CONF_MODE: MODE_LOCAL}) for index in range(2)]
+    for entry in entries:
+        entry.add_to_hass(hass)
+
+    async def register_paths(paths):
+        await asyncio.sleep(0)
+
+    resources = AsyncMock(side_effect=register_paths)
+    with patch.object(hass, "http", MagicMock(async_register_static_paths=resources)), patch.object(
+        hass.config_entries, "async_forward_entry_setups", AsyncMock()
+    ):
+        assert all(await asyncio.gather(*(async_setup_entry(hass, entry) for entry in entries)))
+    resources.assert_awaited_once()
 
 
 async def test_pairing_installation_secret_is_removed_only_after_entry_setup(hass):

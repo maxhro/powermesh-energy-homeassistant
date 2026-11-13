@@ -6,6 +6,7 @@ The powermesh.de REST transfer remains in this package but is disabled by
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import voluptuous as vol
@@ -83,14 +84,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: PowermeshConfigEntry) -> bool:
     """Start local monitoring, the local overview or (when enabled) the cloud uploader."""
-    if hass.http is not None and not hass.data.get(f"{DOMAIN}_card_registered"):
-        await hass.http.async_register_static_paths([
-            StaticPathConfig(CARD_URL, str(Path(__file__).parent / "frontend" / "powermesh-energy-card.js"), False)
-        ])
-        if "frontend" in hass.config.components:
-            # Version query busts browser caches after updates; no manual dashboard resource is needed.
-            add_extra_js_url(hass, f"{CARD_URL}?v={VERSION}")
-        hass.data[f"{DOMAIN}_card_registered"] = True
+    async with hass.data.setdefault(f"{DOMAIN}_card_lock", asyncio.Lock()):
+        if hass.http is not None and not hass.data.get(f"{DOMAIN}_card_registered"):
+            await hass.http.async_register_static_paths([
+                StaticPathConfig(CARD_URL, str(Path(__file__).parent / "frontend" / "powermesh-energy-card.js"), False)
+            ])
+            if "frontend" in hass.config.components:
+                add_extra_js_url(hass, f"{CARD_URL}?v={VERSION}")
+            hass.data[f"{DOMAIN}_card_registered"] = True
     mode = entry.data.get(CONF_MODE)
     if mode == MODE_MONITOR:
         monitor = AnomalyMonitor(hass, entry)
