@@ -2,7 +2,7 @@
 
 ## Current baseline
 
-- Version `0.9.1` prototype: local anomaly monitoring (`monitor.py`,
+- Version `0.9.2` prototype: local anomaly monitoring (`monitor.py`,
   `monitor_flow.py`). Owner-confirmed sensors (max 50) suggested from areas,
   labels and devices: learned EWMA normal range for power/temperature/humidity,
   counter glitch/decrease checks for `total_increasing` energy, no-data checks,
@@ -31,6 +31,8 @@
   never endpoints, headers, payload formats or error codes. State that
   powermesh.de terms apply. Do not publish credentials, archives, caches,
   virtual environments or test runtime data.
+- Keep README screenshots in `docs/screenshots/` current with changed setup
+  flows and dashboard cards; capture only synthetic, non-identifying data.
 - Data is pseudonymous, not anonymous. Registration is not consent to sell or
   share household data. Retain explicit sensor selection, HTTPS/TLS, bounded
   buffering, confirmed-storage removal and visible loss/error reporting.

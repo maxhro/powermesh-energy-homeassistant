@@ -15,8 +15,8 @@ function fixture(t) {
   t.after(() => rmSync(work, { recursive: true }));
   copyFileSync(join(root, 'build-package.ps1'), join(work, 'build-package.ps1'));
   for (const [name, content] of Object.entries({
-    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.1"}',
-    [`${component}/const.py`]: 'VERSION: Final = "0.9.1"\n',
+    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.2"}',
+    [`${component}/const.py`]: 'VERSION: Final = "0.9.2"\n',
     [`${component}/__init__.py`]: '',
     [`${component}/translations/de.json`]: '{}',
     [`${component}/frontend/powermesh-energy-card.js`]: 'export const synthetic = true;',
@@ -60,7 +60,7 @@ test('manual-install ZIP includes exactly component sources and license without 
   assert.equal(existsSync(join(work, 'dist')), false);
   const built = run(work, '-BuildPackage');
   assert.equal(built.status, 0, built.stderr);
-  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.1.zip');
+  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.2.zip');
   assert.deepEqual(zipNames(path), [
     `${component}/__init__.py`, `${component}/const.py`, `${component}/frontend/powermesh-energy-card.js`, `${component}/manifest.json`,
     `${component}/translations/de.json`, 'LICENSE',
@@ -74,7 +74,7 @@ test('version drift, JSON secret files and links are rejected before output', (t
   const work = fixture(t);
   writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "1.0.0"\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
-  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.1"\n');
+  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.2"\n');
   const yaml = join(work, component, 'secrets.yaml');
   writeFileSync(yaml, 'token: SYNTHETIC_NEVER\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
@@ -96,7 +96,7 @@ globalThis.HTMLElement = class {};
 globalThis.customElements = { get: () => undefined, define: () => {} };
 globalThis.window = { customCards: [] };
 const cardSource = readFileSync(join(root, component, 'frontend/powermesh-energy-card.js'), 'utf8');
-const { sourceValue, bandGeometry, sparklinePath, timelineSegments, numericState } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
+const { sourceValue, configuredEnergyRoles, bandGeometry, sparklinePath, timelineSegments, numericState, smoothHistory, powerHistoryGeometry } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
 const now = Date.parse('2026-11-05T12:00:00Z');
 const source = (value, unit = 'W', stamp = '2026-11-05T12:00:00Z') => ({
   state: value, attributes: { unit_of_measurement: unit }, last_updated: stamp,
@@ -122,6 +122,39 @@ test('local energy widget converts units and identifies missing, invalid, signed
   assert.equal(stale.value, 10);
   assert.equal(stale.stale, true);
   assert.match(stale.status, /Veraltet/);
+});
+
+test('energy card shows only configured roles, including unavailable sources', () => {
+  assert.deepEqual(configuredEnergyRoles({}, {}).map(([role]) => role), []);
+  assert.deepEqual(configuredEnergyRoles({}, { solar_power: 'sensor.solar' }).map(([role]) => role), ['solar_power']);
+  assert.deepEqual(configuredEnergyRoles({ grid_import_power: 'sensor.missing' }, { battery_soc: 'sensor.battery' }).map(([role]) => role), ['grid_import_power', 'battery_soc']);
+  assert.equal(sourceValue(undefined, 'grid_import_power', now).status, 'Nicht verfügbar');
+});
+
+test('energy card aligns metrics and offers a time-weighted optional power history', () => {
+  assert.match(cardSource, /\.metric \{ display: flex; flex-direction: column/);
+  assert.match(cardSource, /name: "show_history"/);
+  assert.match(cardSource, /name: "history_hours"/);
+  assert.match(cardSource, /name: "smoothing_minutes"/);
+  assert.deepEqual(smoothHistory([[0, 0], [5, 10], [10, 20]], 10), [[0, 0], [5, 0], [10, 5]]);
+  assert.deepEqual(smoothHistory([[0, 0], [5, 10]], 0), [[0, 0], [5, 10]]);
+  assert.deepEqual(smoothHistory([[0, 100], [5, NaN], [8, 20], [10, 40]], 10), [[0, 100], [5, NaN], [8, 20], [10, 20]]);
+  assert.deepEqual(smoothHistory([[0, 0], [5, 10], [20, 20]], 10), [[0, 0], [5, 0], [20, 10]]);
+  const chart = powerHistoryGeometry([
+    { role: 'solar_power', label: 'Solar', color: '#b57912', unit: 'kW', points: [[0, 1], [3600, 2]] },
+    { role: 'grid_import_power', label: 'Netzbezug', color: '#22766d', unit: 'W', points: [[0, 500], [3600, 1000]] },
+  ], 0, 3600, 360, 156);
+  assert.equal(chart.maxValue, 2000);
+  assert.equal(chart.lines.length, 2);
+  assert.equal(chart.grid.length, 5);
+  assert.equal(chart.ticks.length, 3);
+  assert.match(chart.lines[0].path, /^M42 /);
+  const held = powerHistoryGeometry([
+    { role: 'solar_power', unit: 'W', points: [[-100, 500]] },
+  ], 0, 3600, 360, 156);
+  assert.match(held.lines[0].path, /^M42 .*H352$/);
+  assert.equal(powerHistoryGeometry([{ unit: '%', points: [[0, 50]] }], 0, 3600, 360, 156), null);
+  assert.equal(powerHistoryGeometry([], 0, 3600, 360, 156), null);
 });
 
 test('anomaly widget positions the learned band and flags values outside it', () => {
