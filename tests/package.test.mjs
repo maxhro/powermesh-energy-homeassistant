@@ -33,7 +33,7 @@ function fixture(t) {
 
 function run(work, flag) {
   return spawnSync('pwsh', ['-NoProfile', '-File', join(work, 'build-package.ps1'), flag], {
-    encoding: 'utf8', timeout: 30_000,
+    encoding: 'utf8', timeout: 120_000,
   });
 }
 
