@@ -15,8 +15,8 @@ function fixture(t) {
   t.after(() => rmSync(work, { recursive: true }));
   copyFileSync(join(root, 'build-package.ps1'), join(work, 'build-package.ps1'));
   for (const [name, content] of Object.entries({
-    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.2"}',
-    [`${component}/const.py`]: 'VERSION: Final = "0.9.2"\n',
+    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.3"}',
+    [`${component}/const.py`]: 'VERSION: Final = "0.9.3"\n',
     [`${component}/__init__.py`]: '',
     [`${component}/translations/de.json`]: '{}',
     [`${component}/frontend/powermesh-energy-card.js`]: 'export const synthetic = true;',
@@ -60,7 +60,7 @@ test('manual-install ZIP includes exactly component sources and license without 
   assert.equal(existsSync(join(work, 'dist')), false);
   const built = run(work, '-BuildPackage');
   assert.equal(built.status, 0, built.stderr);
-  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.2.zip');
+  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.3.zip');
   assert.deepEqual(zipNames(path), [
     `${component}/__init__.py`, `${component}/const.py`, `${component}/frontend/powermesh-energy-card.js`, `${component}/manifest.json`,
     `${component}/translations/de.json`, 'LICENSE',
@@ -74,7 +74,7 @@ test('version drift, JSON secret files and links are rejected before output', (t
   const work = fixture(t);
   writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "1.0.0"\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
-  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.2"\n');
+  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.3"\n');
   const yaml = join(work, component, 'secrets.yaml');
   writeFileSync(yaml, 'token: SYNTHETIC_NEVER\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
@@ -96,7 +96,7 @@ globalThis.HTMLElement = class {};
 globalThis.customElements = { get: () => undefined, define: () => {} };
 globalThis.window = { customCards: [] };
 const cardSource = readFileSync(join(root, component, 'frontend/powermesh-energy-card.js'), 'utf8');
-const { sourceValue, configuredEnergyRoles, bandGeometry, sparklinePath, timelineSegments, numericState, smoothHistory, powerHistoryGeometry } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
+const { sourceValue, roleEntities, summedSourceValue, averagedSourceValue, configuredEnergyRoles, bandGeometry, sparklinePath, timelineSegments, numericState, smoothHistory, powerHistoryGeometry } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
 const now = Date.parse('2026-11-05T12:00:00Z');
 const source = (value, unit = 'W', stamp = '2026-11-05T12:00:00Z') => ({
   state: value, attributes: { unit_of_measurement: unit }, last_updated: stamp,
@@ -127,8 +127,32 @@ test('local energy widget converts units and identifies missing, invalid, signed
 test('energy card shows only configured roles, including unavailable sources', () => {
   assert.deepEqual(configuredEnergyRoles({}, {}).map(([role]) => role), []);
   assert.deepEqual(configuredEnergyRoles({}, { solar_power: 'sensor.solar' }).map(([role]) => role), ['solar_power']);
+  assert.deepEqual(configuredEnergyRoles({}, { solar_power: ['sensor.solar', 'sensor.solar_roof'] }).map(([role]) => role), ['solar_power']);
+  assert.deepEqual(roleEntities({ solar_power: 'sensor.solar' }, {}, 'solar_power'), ['sensor.solar']);
+  assert.deepEqual(roleEntities({ solar_power: ['sensor.solar', 'sensor.solar_roof'] }, {}, 'solar_power'), ['sensor.solar', 'sensor.solar_roof']);
+  assert.deepEqual(roleEntities({ solar_power: [] }, { solar_power: ['sensor.solar'] }, 'solar_power'), ['sensor.solar']);
   assert.deepEqual(configuredEnergyRoles({ grid_import_power: 'sensor.missing' }, { battery_soc: 'sensor.battery' }).map(([role]) => role), ['grid_import_power', 'battery_soc']);
   assert.equal(sourceValue(undefined, 'grid_import_power', now).status, 'Nicht verfügbar');
+});
+
+test('power areas can be summed across W and kW without hiding incomplete sources', () => {
+  const total = summedSourceValue([source('1500', 'W'), source('0.5', 'kW')], 'solar_power', now);
+  assert.deepEqual(total, { value: 2, unit: 'kW', status: '2 Quellen', stale: false });
+  assert.deepEqual(summedSourceValue([source('1500'), undefined], 'grid_import_power', now), {
+    value: null, status: 'Quellen prüfen · 1/2 verfügbar',
+  });
+  assert.match(cardSource, /name: "sum_by_area", selector: \{ boolean: \{\} \}/);
+  assert.match(cardSource, /multiple: true/);
+});
+
+test('battery percentages can be averaged without summing or hiding incomplete sources', () => {
+  assert.deepEqual(averagedSourceValue([source('60', '%'), source('80', '%')], 'battery_soc', now), {
+    value: 70, unit: '%', status: 'Mittelwert aus 2 Sensoren', stale: false,
+  });
+  assert.deepEqual(averagedSourceValue([source('60', '%'), undefined], 'battery_soc', now), {
+    value: null, status: 'Quellen prüfen · 1/2 verfügbar',
+  });
+  assert.match(cardSource, /name: "average_battery_soc", selector: \{ boolean: \{\} \}/);
 });
 
 test('energy card aligns metrics and offers a time-weighted optional power history', () => {

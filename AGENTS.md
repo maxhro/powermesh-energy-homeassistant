@@ -2,12 +2,14 @@
 
 ## Current baseline
 
-- Version `0.9.2` prototype: local anomaly monitoring (`monitor.py`,
+- Version `0.9.3` prototype: local anomaly monitoring (`monitor.py`,
   `monitor_flow.py`). Owner-confirmed sensors (max 50) suggested from areas,
   labels and devices: learned EWMA normal range for power/temperature/humidity,
   counter glitch/decrease checks for `total_increasing` energy, no-data checks,
   acknowledge service, persistent/notify-entity messages, findings sensor,
-  problem binary sensor and `powermesh-anomaly-card`. Bounded learning state
+  problem binary sensor and `powermesh-anomaly-card`. The local energy overview
+  supports multiple sources per area, optional power sums and battery percentage
+  averages. Bounded learning state
   stays in private HA storage and is removed with the entry. No AI, no cloud,
   no control, no savings promises.
 - The powermesh.de REST transfer is disabled via

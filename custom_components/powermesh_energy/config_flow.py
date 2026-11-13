@@ -208,8 +208,10 @@ def _local_schema(hass: HomeAssistant, defaults: Mapping[str, Any]) -> vol.Schem
         units = {"%"} if role == "battery_soc" else {"W", "kW"}
         candidates = [state.entity_id for state in hass.states.async_all("sensor")
                       if state.attributes.get("unit_of_measurement") in units]
-        key = vol.Optional(role, description={"suggested_value": defaults[role]}) if defaults.get(role) else vol.Optional(role)
-        schema[key] = EntitySelector(EntitySelectorConfig(domain="sensor", include_entities=candidates))
+        value = defaults.get(role)
+        suggested = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+        key = vol.Optional(role, description={"suggested_value": suggested}) if suggested else vol.Optional(role)
+        schema[key] = EntitySelector(EntitySelectorConfig(domain="sensor", include_entities=candidates, multiple=True))
     return vol.Schema(schema)
 
 
@@ -218,16 +220,21 @@ def _local_errors(hass: HomeAssistant, roles: Mapping[str, Any]) -> dict[str, st
         return {"base": "no_entities"}
     errors = {}
     selected = set()
-    for role, entity_id in roles.items():
-        if role not in LOCAL_ROLES or not entity_id:
+    for role, value in roles.items():
+        if role not in LOCAL_ROLES or not value:
             continue
-        state = hass.states.get(entity_id) if isinstance(entity_id, str) else None
-        units = {"%"} if role == "battery_soc" else {"W", "kW"}
-        if state is None or not entity_id.startswith("sensor.") or state.attributes.get("unit_of_measurement") not in units:
+        entities = [value] if isinstance(value, str) else value if isinstance(value, list) else None
+        if entities is None or any(not isinstance(entity_id, str) for entity_id in entities):
             errors[role] = "invalid_source"
-        elif entity_id in selected:
-            errors[role] = "duplicate_source"
-        selected.add(entity_id)
+            continue
+        units = {"%"} if role == "battery_soc" else {"W", "kW"}
+        for entity_id in entities:
+            state = hass.states.get(entity_id)
+            if state is None or not entity_id.startswith("sensor.") or state.attributes.get("unit_of_measurement") not in units:
+                errors[role] = "invalid_source"
+            elif entity_id in selected:
+                errors[role] = "duplicate_source"
+            selected.add(entity_id)
     return errors
 
 
@@ -362,6 +369,7 @@ class PowermeshConfigFlow(MonitorFlowMixin, ConfigFlow, domain=DOMAIN):
         roles = {role: user_input[role] for role in LOCAL_ROLES if user_input and user_input.get(role)}
         errors = _local_errors(self.hass, roles) if user_input is not None else {}
         if user_input is not None and not errors:
+            roles = {role: [value] if isinstance(value, str) else value for role, value in roles.items()}
             await self.async_set_unique_id(f"{DOMAIN}_local")
             self._abort_if_unique_id_configured()
             return self.async_create_entry(title="Powermesh Energie", data={CONF_MODE: MODE_LOCAL}, options={CONF_ROLES: roles})
@@ -723,6 +731,7 @@ class PowermeshOptionsFlow(MonitorFlowMixin, OptionsFlow):
         roles = {role: user_input[role] for role in LOCAL_ROLES if user_input and user_input.get(role)}
         errors = _local_errors(self.hass, roles) if user_input is not None else {}
         if user_input is not None and not errors:
+            roles = {role: [value] if isinstance(value, str) else value for role, value in roles.items()}
             return self.async_create_entry(data={CONF_ROLES: roles})
         defaults = roles if user_input is not None else self.config_entry.options.get(CONF_ROLES, {})
         return self.async_show_form(step_id="local", data_schema=_local_schema(self.hass, defaults), errors=errors)

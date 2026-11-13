@@ -124,7 +124,9 @@ Meldung unbestätigt ist, und eignet sich als Auslöser eigener Automationen.
    in W/kW, optional Akkustand in Prozent. Die Auswahl ist nach Einheiten
    gefiltert. Netzbezug und Einspeisung brauchen getrennte einseitige Quellen;
    ein vorzeichenbehafteter gemeinsamer Netzsensor wird nicht automatisch geteilt.
-3. Speichern. Quellen lassen sich unter **Konfigurieren** ändern oder entfernen.
+3. Pro Bereich einen oder mehrere Sensoren wählen und speichern. Solarleistung,
+   Netzbezug, Einspeisung, Akkustand und Leistungsverbraucher lassen sich unter
+   **Konfigurieren** ändern oder entfernen.
 
 ![Quellen der lokalen Energieübersicht konfigurieren](docs/screenshots/einrichtung-energie.png)
 
@@ -160,7 +162,8 @@ Optional im Karteneditor zuschaltbar (standardmäßig aus):
 Leistungs-Kacheln sind einheitlich ausgerichtet. Fehlende Quellen, ungeeignete
 Einheiten, negative einseitige Leistung und ungültiger Akkustand werden bei
 konfigurierten Quellen ausdrücklich angezeigt; nicht zugeordnete Quellen werden
-ausgeblendet. Nach standardmäßig 15 Minuten ohne Aktualisierung wird
+ausgeblendet. Mehrere Sensoren je Bereich erscheinen einzeln mit ihrem Namen.
+Nach standardmäßig 15 Minuten ohne Aktualisierung wird
 der letzte Wert als **Veraltet** markiert (im Karteneditor änderbar).
 
 ![Karte Powermesh Energie mit synthetischen Sensoren und Leistungsverlauf](docs/screenshots/energie-karte.png)
@@ -169,6 +172,8 @@ Optional im Karteneditor zuschaltbar (standardmäßig aus):
 
 | Option | Wirkung |
 |---|---|
+| `sum_by_area` | Leistungsquellen eines Bereichs als Summe anzeigen; bei unvollständigen Quellen wird keine Teilsumme ausgegeben. |
+| `average_battery_soc` | Mehrere Akkustände als Mittelwert anzeigen; bei unvollständigen Quellen wird kein Teilmittelwert ausgegeben. |
 | `show_history` | Leistungsverlauf für ausgewählte Solar-, Netzbezugs- und Einspeisesensoren mit Raster, Zeitachse und Legende. Liest die vorhandene HA-Historie; der Akkustand wird nicht mit Leistung vermischt. |
 | `history_hours` (1–48, Standard 6) | Zeitraum des Diagramms |
 | `smoothing_minutes` (0–60, Standard 0) | Zeitgewichtete Glättung nur für die Diagrammanzeige; `0` zeigt die Rohkurve. Sensorwerte, Recorder und Anomalieerkennung bleiben unverändert. |
@@ -194,7 +199,7 @@ Version installieren und Home Assistant danach neu starten.
 
 ## Versionen
 
-Diese Integration ist ein Prototyp in Version **0.9.2**. Sie wird unabhängig von
+Diese Integration ist ein Prototyp in Version **0.9.3**. Sie wird unabhängig von
 der Website powermesh.de versioniert und benötigt keinen Dienst.
 
 ## Lokale Tests
@@ -208,7 +213,7 @@ pwsh -NoProfile -File ./build-package.ps1 -DryRun
 pwsh -NoProfile -File ./build-package.ps1 -BuildPackage
 ```
 
-Das Archiv `dist/powermesh-energy-homeassistant-0.9.2.zip` enthält
+Das Archiv `dist/powermesh-energy-homeassistant-0.9.3.zip` enthält
 `custom_components/powermesh_energy` und die Lizenz, keine Testumgebung, Caches
 oder Zugangsdaten. Vorhandene Archive werden nicht überschrieben.
 Den enthaltenen Komponentenordner in das Konfigurationsverzeichnis von

@@ -7,7 +7,7 @@ from typing import Final
 
 DOMAIN: Final = "powermesh_energy"
 # Keep in sync with manifest.json.
-VERSION: Final = "0.9.2"
+VERSION: Final = "0.9.3"
 # The powermesh.de REST transfer stays in the code base but is not offered or started.
 CLOUD_TRANSFER_ENABLED: Final = False
 API_RELEASE: Final = "0.4.0"
@@ -55,7 +55,7 @@ SENSITIVITY_OPTIONS: Final[dict[str, float]] = {"low": 6.0, "medium": 4.0, "high
 DEFAULT_SENSITIVITY: Final = "medium"
 MAX_MONITORS: Final = 50
 MAX_CANDIDATES: Final = 100
-LOCAL_ROLES: Final = ("solar_power", "grid_import_power", "grid_export_power", "battery_soc")
+LOCAL_ROLES: Final = ("solar_power", "grid_import_power", "grid_export_power", "battery_soc", "consumer_power")
 CARD_URL: Final = "/powermesh-energy/powermesh-energy-card.js"
 CONF_UPLOAD_INTERVAL: Final = "upload_interval"
 # Per-entity smoothing option keys, see smoothing.OPTIONS.
