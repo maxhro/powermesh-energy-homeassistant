@@ -25,11 +25,13 @@
   state per selected entity, coalesced locally and bounded to 200 entities;
   existing entries and operator-invitation fallback retain raw history mode.
   Snapshots are storage only, not a website display or analysis feature.
-  Smart-home comparison and improvement potential are **in Entwicklung**,
-  not implemented. Do not add analysis, exports, control or data sharing.
+  Smart-home comparison and improvement potential are not implemented.
+  Do not add analysis, exports, control or data sharing.
 - Keep `manifest.json` and `const.py` versions aligned. Website, service and
   integration have independent version lifecycles. Interface documentation
-  belongs in the private website/service repositories.
+  belongs in the private website/service repositories. Keep the central AI sync
+  reference `../powermesh-product-planning/homeassistant-integration/INTEGRATION_STATE.md`
+  updated with all behavioral, version, entity, and interface changes.
 - Public documentation covers setup, sensor selection, status and privacy,
   never endpoints, headers, payload formats or error codes. State that
   powermesh.de terms apply. Do not publish credentials, archives, caches,

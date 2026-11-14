@@ -243,20 +243,6 @@ Lizenz; es werden daran keine Rechte eingeräumt. Ihre Nutzung richtet sich nach
 den [Nutzungsbedingungen von powermesh.de](https://powermesh.de/?r=terms) und setzt
 einen persönlichen Zugang voraus.
 
-## Ausblick
-
-Nicht Teil dieser Version, ohne Zusage oder Termin:
-
-- **Freiwillige Übertragung an powermesh.de:** Die Integration soll ausgewählte
-  Messwerte später optional an powermesh.de übertragen können. Die dafür
-  vorhandene Verbindung ist im Quellcode erhalten, in dieser Version aber
-  deaktiviert und wird bei der Einrichtung nicht angeboten. Für eine Übertragung
-  würden ein Konto, eine ausdrückliche Einwilligung und die
-  [Nutzungsbedingungen von powermesh.de](https://powermesh.de/?r=terms) gelten.
-- **Vergleich zwischen Smart Homes:** Aus übertragenen Werten könnten sich später
-  geeignete Systeme miteinander vergleichen lassen. Welche Vergleiche sinnvoll
-  sind, ist offen; ein Vergleich ist nicht implementiert.
-
 ---
 
 **English:** Prototype Home Assistant integration for local anomaly detection.
@@ -266,6 +252,4 @@ glitches and decreases, detects missing data and reports findings via Home
 Assistant notifications, an optional notify entity, a findings sensor, a problem
 binary sensor and a dashboard card. No account, no data transfer and no AI are
 used. Install it via Settings → Marketplace (Home Assistant 2026.11+) or HACS
-(2026.10 and older). Code: MIT. Outlook, not part of this version: an optional
-transfer of selected readings to powermesh.de and a comparison between smart
-homes; the existing transfer code is disabled.
+(2026.10 and older). Code: MIT.
