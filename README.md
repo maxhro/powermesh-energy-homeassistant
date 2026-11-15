@@ -158,6 +158,7 @@ Optional im Karteneditor zuschaltbar (standardmäßig aus):
 
 | Option | Wirkung |
 |---|---|
+| `show_header` (Standard: `true`) | Kopfbereich mit Titel und Badge anzeigen; bei `false` wird der Header ausgeblendet und der Inhalt rückt bündig nach oben. |
 | `show_learning_bar` | Lernfortschritt als Balken |
 | `show_history`, `history_hours` (1–48, Standard 6) | Verlaufsdiagramm je Sensor mit eingezeichnetem Normalbereich; liest nur die vorhandene HA-Historie |
 | `smoothing_minutes` (0–60, Standard 5) | Zeitgewichtete Glättung nur für die Diagrammanzeige; `0` zeigt die Rohkurve. Sensorwerte, Recorder und Anomalieerkennung bleiben unverändert. |
@@ -177,6 +178,7 @@ Optional im Karteneditor zuschaltbar (standardmäßig aus):
 
 | Option | Wirkung |
 |---|---|
+| `show_header` (Standard: `true`) | Kopfbereich mit Titel und Badge anzeigen; bei `false` wird der Header ausgeblendet und die Kacheln rücken bündig nach oben. |
 | `sum_by_area` | Leistungsquellen eines Bereichs als Summe anzeigen; bei unvollständigen Quellen wird keine Teilsumme ausgegeben. |
 | `average_battery_soc` | Mehrere Akkustände als Mittelwert anzeigen; bei unvollständigen Quellen wird kein Teilmittelwert ausgegeben. |
 | `grid_power_entity` | Optionaler kombinierter Netzsensor mit Vorzeichenwechsel. Er ersetzt getrennte Netzbezugs-/Einspeisesensoren. `grid_negative_is_export` legt fest, ob negative Werte Einspeisung bedeuten (Standard: ja). |
@@ -205,7 +207,9 @@ sechs frei wählbaren Stilen und ist im Dashboard-Designer interaktiv konfigurie
   für die Nachkommastelle mit flüssigem mechanischem Zahlenübergang (Mechanical Carry-Over)
   sowie horizontal rotierende Aluminium-Drehscheibe mit
   roter Eichmarkierung. Die Drehgeschwindigkeit koppelt an die Momentanleistung
-  (`disk_power_entity`); bei Überschuss/Einspeisung dreht sich die Scheibe
+  (`disk_power_entity`, orientiert sich ohne Angabe automatisch am Netzbezug).
+  Physikalische Trägheit lässt den Rotor wie ein echtes mechanisches Bauteil
+  sanft beschleunigen und auslaufen; bei Überschuss/Einspeisung dreht sich die Scheibe
   rückwärts und leuchtet smaragdgrün auf. Der Zahlenwechsel der Walzen lässt
   sich optional per `animate_digits: true / false` steuern.
 - **EBZ Digitalzähler (mMe / DD3):** Authentischer digitaler Haushaltszähler
@@ -230,9 +234,10 @@ type: custom:powermesh-meter-card
 entity: sensor.stromzaehler_bezug
 name: Netzbezug
 style: ferraris
-disk_power_entity: sensor.aktuelle_leistung
+disk_power_entity: sensor.aktuelle_leistung # optional: Momentanleistung (Standard: autom. Netzbezug)
 decimals: 1
 animate_digits: true # optional: Mechanischen Zahlenwechsel animieren (Standard: true)
+show_header: true # optional: false blendet den Kopfbereich aus (Zähler rückt platzsparend nach oben)
 ```
 
 Digitale Standardzähler (EBZ & EMH) wie im Zählerschrank:

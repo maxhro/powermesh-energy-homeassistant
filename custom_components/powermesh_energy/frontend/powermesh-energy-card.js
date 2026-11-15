@@ -123,7 +123,7 @@ export function averagedSourceValue(states, role, now, staleMinutes = 15) {
   };
 }
 
-class PowermeshEnergyCard extends HTMLElement {
+export class PowermeshEnergyCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
@@ -132,6 +132,9 @@ class PowermeshEnergyCard extends HTMLElement {
         :host { display: block; }
         ha-card { overflow: hidden; border-radius: var(--ha-card-border-radius, 8px); }
         header { display: flex; align-items: center; gap: 12px; padding: 20px 20px 12px; }
+        ha-card.no-header header { display: none; }
+        ha-card.no-header .values { padding-top: 12px; }
+        ha-card.no-header .metric { border-top: 0; }
         header ha-icon { color: var(--primary-color); flex: none; }
         h2 { flex: 1; min-width: 0; margin: 0; font-size: 20px; font-weight: 600; letter-spacing: 0; overflow-wrap: anywhere; }
         .local { color: var(--secondary-text-color); font-size: 12px; }
@@ -168,7 +171,7 @@ class PowermeshEnergyCard extends HTMLElement {
 
   static getStubConfig(hass) {
     const entity = Object.values(hass.states).find((state) => state.state === "local" && state.attributes?.roles)?.entity_id;
-    return entity ? { entity } : {};
+    return entity ? { entity, show_header: true } : { show_header: true };
   }
 
   setConfig(config) {
@@ -302,6 +305,9 @@ class PowermeshEnergyCard extends HTMLElement {
 
   render() {
     if (!this._config || !this._hass) return;
+    const showHeader = Boolean(this._config.show_header ?? this._config.show_title ?? true);
+    const cardEl = this.shadowRoot.querySelector("ha-card");
+    if (cardEl) cardEl.classList.toggle("no-header", !showHeader);
     const focusedRole = this.shadowRoot.activeElement?.dataset.key;
     this.shadowRoot.querySelector("h2").textContent = this._config.title || "Powermesh Energie";
     const configured = this._hass.states[this._config.entity]?.attributes?.roles || {};
@@ -447,6 +453,7 @@ class PowermeshEnergyCardEditor extends HTMLElement {
     this._form = document.createElement("ha-form");
     this._form.schema = [
       { name: "title", selector: { text: {} } },
+      { name: "show_header", selector: { boolean: {} } },
       { name: "entity", selector: { entity: { domain: "sensor", integration: "powermesh_energy" } } },
       ...roles.map(([role]) => ({
         name: role,
@@ -479,7 +486,7 @@ class PowermeshEnergyCardEditor extends HTMLElement {
       { name: "smoothing_minutes", selector: { number: { min: 0, max: 60, mode: "box", unit_of_measurement: "min" } } },
     ];
     this._form.computeLabel = ({ name }) => ({
-      title: "Titel", entity: "Lokale Energieübersicht", stale_after: "Veraltet nach", sum_by_area: "Leistung je Bereich summieren", average_battery_soc: "Akkustände mitteln",
+      title: "Titel", show_header: "Kopfbereich mit Titel anzeigen", entity: "Lokale Energieübersicht", stale_after: "Veraltet nach", sum_by_area: "Leistung je Bereich summieren", average_battery_soc: "Akkustände mitteln",
       grid_power_entity: "Kombinierter Netzsensor (ersetzt getrennte Sensoren)", grid_negative_is_export: "Negative Netzwerte bedeuten Einspeisung",
       battery_power_entity: "Batterieleistung (Laden/Entladen)", battery_negative_is_discharge: "Negative Batteriewerte bedeuten Entladen",
       show_history: "Leistungsverlauf anzeigen", history_hours: "Verlaufszeitraum", smoothing_minutes: "Glättung (0 = aus)",
@@ -496,7 +503,7 @@ class PowermeshEnergyCardEditor extends HTMLElement {
       const selected = config[role];
       return selected == null ? [] : [[role, typeof selected === "string" ? [selected] : selected]];
     }));
-    this._config = { show_history: false, history_hours: 6, smoothing_minutes: 0, sum_by_area: false, average_battery_soc: false, grid_negative_is_export: true, battery_negative_is_discharge: true, ...config, ...rolesConfig };
+    this._config = { show_header: true, show_history: false, history_hours: 6, smoothing_minutes: 0, sum_by_area: false, average_battery_soc: false, grid_negative_is_export: true, battery_negative_is_discharge: true, ...config, ...rolesConfig };
     this._form.data = this._config;
   }
   set hass(hass) { this._form.hass = hass; }
@@ -695,7 +702,7 @@ function svg(tag, attributes = {}) {
   return node;
 }
 
-const ANOMALY_DEFAULTS = { show_monitors: true, show_recent: true, show_history: false, history_hours: 6, smoothing_minutes: 5, show_learning_bar: false, show_timeline: false, timeline_days: 7 };
+const ANOMALY_DEFAULTS = { show_header: true, show_monitors: true, show_recent: true, show_history: false, history_hours: 6, smoothing_minutes: 5, show_learning_bar: false, show_timeline: false, timeline_days: 7 };
 const HISTORY_REFRESH_MS = 300000;
 const SPARK_WIDTH = 300;
 const SPARK_HEIGHT = 48;
@@ -705,7 +712,7 @@ function formatTime(iso, language) {
   return Number.isFinite(stamp) ? new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "short" }).format(stamp) : "";
 }
 
-class PowermeshAnomalyCard extends HTMLElement {
+export class PowermeshAnomalyCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
@@ -747,6 +754,42 @@ class PowermeshAnomalyCard extends HTMLElement {
         .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; background: var(--error-color, #b34f55); }
         .legend i.data_quality { background: var(--warning-color, #b57912); }
       </style>
+        header { display: flex; align-items: center; gap: 12px; padding: 20px 20px 8px; }
+        ha-card.no-header header { display: none; }
+        ha-card.no-header .body { padding-top: 12px; }
+        header ha-icon { color: var(--primary-color); flex: none; }
+        h2 { flex: 1; min-width: 0; margin: 0; font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
+        .count { font-size: 12px; padding: 2px 8px; border-radius: 12px; background: var(--secondary-background-color); }
+        .count.alert { background: var(--error-color, #b34f55); color: var(--text-primary-color, #fff); }
+        section { padding: 4px 16px 12px; }
+        h3 { margin: 8px 0 4px; font-size: 14px; font-weight: 600; color: var(--secondary-text-color); }
+        .finding, .monitor { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 4px; border-top: 1px solid var(--divider-color); }
+        .name { font-weight: 500; overflow-wrap: anywhere; }
+        .meta { grid-column: 1 / -1; color: var(--secondary-text-color); font-size: 12px; overflow-wrap: anywhere; }
+        .badge { font-size: 12px; align-self: start; color: var(--badge-color); }
+        button { font: inherit; font-size: 13px; border-radius: 4px; border: 1px solid var(--primary-color); color: var(--primary-color); background: transparent; padding: 4px 10px; cursor: pointer; align-self: start; }
+        button:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+        .gauge { grid-column: 1 / -1; height: 14px; position: relative; border-radius: 7px; background: var(--secondary-background-color); }
+        .band { position: absolute; top: 0; bottom: 0; border-radius: 7px; background: color-mix(in srgb, var(--success-color, #427a3b) 35%, transparent); }
+        .marker { position: absolute; top: -2px; bottom: -2px; width: 3px; margin-left: -1px; border-radius: 2px; background: var(--primary-text-color); }
+        .marker.outside { background: var(--error-color, #b34f55); }
+        .empty { color: var(--secondary-text-color); font-size: 14px; padding: 8px 4px; }
+        details summary { cursor: pointer; color: var(--secondary-text-color); font-size: 14px; padding: 8px 4px; }
+        .progress { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--secondary-background-color); overflow: hidden; }
+        .progress > div { height: 100%; background: var(--info-color, #22766d); }
+        .spark { grid-column: 1 / -1; display: block; width: 100%; height: 48px; }
+        .spark .spark-band { fill: color-mix(in srgb, var(--success-color, #427a3b) 22%, transparent); }
+        .spark .spark-line { fill: none; stroke: var(--primary-color); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+        .spark-note { grid-column: 1 / -1; color: var(--secondary-text-color); font-size: 11px; }
+        .timeline { position: relative; height: 18px; margin: 4px 4px 2px; border-radius: 4px; background: var(--secondary-background-color); }
+        .timeline span { position: absolute; top: 3px; bottom: 3px; border-radius: 3px; background: var(--error-color, #b34f55); }
+        .timeline span.data_quality { background: var(--warning-color, #b57912); }
+        .timeline span.done { opacity: 0.55; }
+        .timeline-axis { display: flex; justify-content: space-between; color: var(--secondary-text-color); font-size: 11px; padding: 0 4px 4px; }
+        .legend { display: flex; flex-wrap: wrap; gap: 12px; color: var(--secondary-text-color); font-size: 11px; padding: 0 4px; }
+        .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; background: var(--error-color, #b34f55); }
+        .legend i.data_quality { background: var(--warning-color, #b57912); }
+      </style>
       <ha-card><header><ha-icon icon="mdi:alert-decagram-outline"></ha-icon><h2></h2><span class="count"></span></header><div class="body"></div></ha-card>`;
   }
 
@@ -754,7 +797,7 @@ class PowermeshAnomalyCard extends HTMLElement {
 
   static getStubConfig(hass) {
     const entity = Object.values(hass.states).find((state) => Array.isArray(state.attributes?.monitors) && Array.isArray(state.attributes?.findings))?.entity_id;
-    return entity ? { entity } : {};
+    return entity ? { entity, show_header: true } : { show_header: true };
   }
 
   setConfig(config) {
@@ -935,6 +978,9 @@ class PowermeshAnomalyCard extends HTMLElement {
 
   render() {
     if (!this._config || !this._hass) return;
+    const showHeader = Boolean(this._config.show_header ?? this._config.show_title ?? true);
+    const cardEl = this.shadowRoot.querySelector("ha-card");
+    if (cardEl) cardEl.classList.toggle("no-header", !showHeader);
     const language = this._hass.locale?.language || "de";
     const state = this._hass.states[this._config.entity];
     const attributes = state?.attributes || {};
@@ -987,6 +1033,7 @@ class PowermeshAnomalyCardEditor extends HTMLElement {
     this._form = document.createElement("ha-form");
     this._form.schema = [
       { name: "title", selector: { text: {} } },
+      { name: "show_header", selector: { boolean: {} } },
       { name: "entity", selector: { entity: { domain: "sensor", integration: "powermesh_energy" } } },
       { name: "show_monitors", selector: { boolean: {} } },
       { name: "show_recent", selector: { boolean: {} } },
@@ -998,7 +1045,7 @@ class PowermeshAnomalyCardEditor extends HTMLElement {
       { name: "timeline_days", selector: { number: { min: 1, max: 30, mode: "box", unit_of_measurement: "d" } } },
     ];
     this._form.computeLabel = ({ name }) => ({
-      title: "Titel", entity: "Offene Auffälligkeiten", show_monitors: "Überwachte Sensoren zeigen", show_recent: "Beendete Auffälligkeiten zeigen",
+      title: "Titel", show_header: "Kopfbereich mit Titel anzeigen", entity: "Offene Auffälligkeiten", show_monitors: "Überwachte Sensoren zeigen", show_recent: "Beendete Auffälligkeiten zeigen",
       show_learning_bar: "Lernfortschritt als Balken", show_history: "Verlaufsdiagramm mit Normalbereich", history_hours: "Verlaufszeitraum", smoothing_minutes: "Glättung (0 = aus)",
       show_timeline: "Zeitleiste der Auffälligkeiten", timeline_days: "Zeitleistenzeitraum",
     })[name] || name;
@@ -1096,6 +1143,132 @@ export function ferrarisSpeed(powerWatts) {
   };
 }
 
+export function isPowerSensor(state) {
+  if (!state) return false;
+  const devClass = state.attributes?.device_class;
+  const unit = state.attributes?.unit_of_measurement;
+  return devClass === "power" || ["W", "kW", "VA", "var"].includes(unit);
+}
+
+export function extractWatts(state) {
+  if (!state || ["unknown", "unavailable"].includes(state.state)) return null;
+  const val = Number(state.state);
+  if (!Number.isFinite(val)) return null;
+  const unit = state.attributes?.unit_of_measurement;
+  if (unit === "kW") return val * 1000;
+  return val;
+}
+
+export function resolveGridImportPower(hass, item) {
+  if (!hass?.states) return null;
+
+  // 1. Explicitly configured disk_power_entity
+  if (item?.disk_power_entity && hass.states[item.disk_power_entity]) {
+    const w = extractWatts(hass.states[item.disk_power_entity]);
+    if (w != null) return w;
+  }
+
+  const allEntries = Object.entries(hass.states).map(([id, s]) => ({
+    id: (s?.entity_id || id || "").toLowerCase(),
+    state: s,
+    friendlyName: (s?.attributes?.friendly_name || "").toLowerCase(),
+  }));
+
+  // 2. Look for configured grid_import_power in Powermesh overview sensors
+  for (const { state: s } of allEntries) {
+    const roles = s?.attributes?.roles;
+    if (Array.isArray(roles?.grid_import_power) && roles.grid_import_power.length > 0) {
+      let sum = 0;
+      let found = false;
+      for (const id of roles.grid_import_power) {
+        const w = extractWatts(hass.states[id]);
+        if (w != null) {
+          sum += w;
+          found = true;
+        }
+      }
+      if (found) return sum;
+    }
+  }
+
+  // 3. Sibling power sensor if item.entity is set (matching base device name)
+  if (item?.entity) {
+    const rawId = item.entity.replace(/^sensor\./, "").toLowerCase();
+    const baseId = rawId.replace(/_?(total_in|total|energy|energie|kwh|zaehlerstand|zaehler|meter|consumption|bezug)_?/gi, "");
+    if (baseId && baseId !== rawId) {
+      const sibling = allEntries.find((e) => {
+        if (!isPowerSensor(e.state)) return false;
+        return e.id.includes(baseId) && (e.id.includes("power") || e.id.includes("leistung") || e.id.includes("watt") || e.id.includes("current"));
+      });
+      if (sibling) {
+        const w = extractWatts(sibling.state);
+        if (w != null) return w;
+      }
+    }
+  }
+
+  // 4. Dedicated Netzbezug / grid import power sensors
+  const netzbezugCandidate = allEntries.find((e) => {
+    if (!isPowerSensor(e.state)) return false;
+    return (
+      e.id.includes("grid_import") ||
+      e.id.includes("netzbezug") ||
+      e.id.includes("strom_bezug") ||
+      e.id.includes("strombezug") ||
+      e.friendlyName.includes("netzbezug") ||
+      e.friendlyName.includes("grid import") ||
+      e.friendlyName.includes("strombezug")
+    );
+  });
+  if (netzbezugCandidate) {
+    const w = extractWatts(netzbezugCandidate.state);
+    if (w != null) return w;
+  }
+
+  // 5. General grid power sensor
+  const gridPowerCandidate = allEntries.find((e) => {
+    if (!isPowerSensor(e.state)) return false;
+    return (
+      e.id.includes("grid_power") ||
+      e.id.includes("netzleistung") ||
+      e.id.includes("leistung_netz") ||
+      e.friendlyName.includes("netzleistung") ||
+      e.friendlyName.includes("grid power")
+    );
+  });
+  if (gridPowerCandidate) {
+    const w = extractWatts(gridPowerCandidate.state);
+    if (w != null) return w;
+  }
+
+  // 6. If item.entity itself is already a power sensor
+  if (item?.entity && hass.states[item.entity]) {
+    const s = hass.states[item.entity];
+    if (isPowerSensor(s)) {
+      return extractWatts(s);
+    }
+  }
+
+  return null;
+}
+
+export function simulateDiscPhysics(currentVelocity, targetVelocity, dt, tau = 1.8) {
+  const clampedDt = Math.max(0, Math.min(dt, 1.0));
+  const alpha = 1 - Math.exp(-clampedDt / Math.max(0.01, tau));
+  let v = currentVelocity + (targetVelocity - currentVelocity) * alpha;
+  if (Math.abs(v) < 0.05 && targetVelocity === 0) {
+    v = 0;
+  }
+  return v;
+}
+
+const safeRaf = typeof requestAnimationFrame === "function"
+  ? requestAnimationFrame
+  : (cb) => setTimeout(() => cb((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()), 16);
+const safeCaf = typeof cancelAnimationFrame === "function"
+  ? cancelAnimationFrame
+  : (id) => clearTimeout(id);
+
 export function meterStyleConfig(config) {
   if (!config) return [];
   if (Array.isArray(config.entities) && config.entities.length > 0) {
@@ -1132,6 +1305,8 @@ export function renderVfdDigitSvg(char) {
 export class PowermeshMeterCard extends HTMLElement {
   constructor() {
     super();
+    this._discAnimations = new Map();
+    this._lastEnergy = new Map();
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `
       <style>
@@ -1142,6 +1317,8 @@ export class PowermeshMeterCard extends HTMLElement {
         h2 { flex: 1; min-width: 0; margin: 0; font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
         .mode-badge { font-size: 11px; font-weight: 500; padding: 3px 8px; border-radius: 10px; background: var(--secondary-background-color); color: var(--secondary-text-color); text-transform: uppercase; letter-spacing: 0.5px; }
         .meters-body { padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 16px; }
+        ha-card.no-header header { display: none; }
+        ha-card.no-header .meters-body { padding: 16px; }
         .meter-card-empty { padding: 24px 16px; text-align: center; color: var(--secondary-text-color); font-size: 14px; }
 
         .style-modern { background: var(--card-background-color, #fff); border: 1px solid var(--divider-color, #e0e0e0); border-radius: 8px; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; }
@@ -1181,7 +1358,7 @@ export class PowermeshMeterCard extends HTMLElement {
         .ferraris-chamber.solar-export { box-shadow: inset 0 0 14px rgba(16, 185, 129, 0.4), inset 0 3px 8px rgba(0,0,0,0.9); border-color: rgba(16, 185, 129, 0.5); }
         .ferraris-window { width: 100%; height: 24px; position: relative; overflow: hidden; border-radius: 4px; background: #111; box-shadow: inset 0 2px 4px rgba(0,0,0,0.8); }
         .ferraris-window-glass { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 2; background: linear-gradient(180deg, rgba(255,255,255,0.2) 0%, transparent 40%, rgba(0,0,0,0.3) 100%); border: 1px solid rgba(255,255,255,0.08); }
-        .ferraris-disc-track { position: absolute; top: 0; left: 0; width: 200%; height: 100%; display: flex; animation: ferraris-spin var(--disc-duration, 0s) linear infinite var(--disc-direction, normal); animation-play-state: var(--disc-play-state, paused); }
+        .ferraris-disc-track { position: absolute; top: 0; left: 0; width: 200%; height: 100%; display: flex; will-change: transform; transform: translate3d(0, 0, 0); }
         .ferraris-disc-half { width: 50%; height: 100%; position: relative; background: repeating-linear-gradient(90deg, #8c8d91 0px, #8c8d91 4px, #58595d 5px, #d1d2d6 9px, #707175 14px); }
         .ferraris-mark { position: absolute; top: 0; bottom: 0; left: 45%; width: 8px; background: #e53935; box-shadow: 0 0 4px #e53935; }
         @keyframes ferraris-spin { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
@@ -1279,12 +1456,13 @@ export class PowermeshMeterCard extends HTMLElement {
       decimals: 1,
       disk_power_entity: powerEntity || "",
       animate_digits: true,
+      show_header: true,
     };
   }
 
   setConfig(config) {
     if (!config) throw new Error("Ungültige Kartenkonfiguration");
-    this._config = { ...config };
+    this._config = { show_header: true, ...config };
     this._render();
   }
 
@@ -1292,8 +1470,125 @@ export class PowermeshMeterCard extends HTMLElement {
     this._hass = hass;
     this._render();
   }
+
+  connectedCallback() {
+    if (this._config) this._render();
+  }
+
+  disconnectedCallback() {
+    this._stopDiscAnimations();
+  }
+
+  _calcTargetVelocity(speed) {
+    if (!speed || !speed.active || !speed.duration) return 0;
+    const v = 50 / Math.max(0.8, speed.duration);
+    return speed.reverse ? v : -v;
+  }
+
+  _attachDiscAnimation(track, speed) {
+    if (!track) return;
+    if (!this._discAnimations) this._discAnimations = new Map();
+    let anim = this._discAnimations.get(track);
+    if (!anim) {
+      anim = {
+        track,
+        position: 0,
+        currentVelocity: 0,
+        targetVelocity: 0,
+        lastTimestamp: 0,
+        rafId: null,
+      };
+      this._discAnimations.set(track, anim);
+    }
+    this._updateDiscAnimation(track, speed);
+  }
+
+  _updateDiscAnimation(track, speed) {
+    if (!this._discAnimations) return;
+    const anim = this._discAnimations.get(track);
+    if (!anim) return;
+    anim.targetVelocity = this._calcTargetVelocity(speed);
+    if (anim.rafId == null && (anim.targetVelocity !== 0 || Math.abs(anim.currentVelocity) > 0.01)) {
+      anim.lastTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+      anim.rafId = safeRaf((now) => this._stepDiscAnimation(anim, now));
+    }
+  }
+
+  _stepDiscAnimation(anim, now) {
+    if (anim.track && anim.track.isConnected === false) {
+      anim.rafId = null;
+      return;
+    }
+    const dt = anim.lastTimestamp ? Math.min((now - anim.lastTimestamp) / 1000, 0.1) : 0.016;
+    anim.lastTimestamp = now;
+
+    anim.currentVelocity = simulateDiscPhysics(anim.currentVelocity, anim.targetVelocity, dt, 1.8);
+
+    if (anim.currentVelocity === 0 && anim.targetVelocity === 0) {
+      anim.rafId = null;
+      return;
+    }
+
+    anim.position += anim.currentVelocity * dt;
+    while (anim.position <= -50) anim.position += 50;
+    while (anim.position > 0) anim.position -= 50;
+
+    if (anim.track) {
+      anim.track.style.transform = `translate3d(${anim.position.toFixed(2)}%, 0, 0)`;
+    }
+    anim.rafId = safeRaf((nextNow) => this._stepDiscAnimation(anim, nextNow));
+  }
+
+  _stopDiscAnimations() {
+    if (this._discAnimations) {
+      for (const anim of this._discAnimations.values()) {
+        if (anim.rafId != null) {
+          safeCaf(anim.rafId);
+          anim.rafId = null;
+        }
+      }
+      this._discAnimations.clear();
+    }
+  }
+
+  _cleanupOrphanedDiscAnimations() {
+    if (!this._discAnimations || !this.shadowRoot) return;
+    for (const [track, anim] of this._discAnimations.entries()) {
+      if (!this.shadowRoot.contains(track)) {
+        if (anim.rafId != null) safeCaf(anim.rafId);
+        this._discAnimations.delete(track);
+      }
+    }
+  }
+
+  _derivePowerFromEnergy(entityId, currentVal, unit) {
+    if (currentVal == null || !Number.isFinite(currentVal)) return null;
+    if (!this._lastEnergy) this._lastEnergy = new Map();
+    const now = Date.now();
+    const prev = this._lastEnergy.get(entityId);
+    this._lastEnergy.set(entityId, { val: currentVal, time: now });
+    if (!prev) return null;
+    const dtSeconds = (now - prev.time) / 1000;
+    if (dtSeconds < 0.5 || dtSeconds > 3600) return null;
+    const delta = currentVal - prev.val;
+    if (delta <= 0) return 0;
+    const isKwh = unit === "kWh" || unit == null;
+    const isWh = unit === "Wh";
+    if (isKwh) {
+      return (delta * 1000 * 3600) / dtSeconds;
+    }
+    if (isWh) {
+      return (delta * 3600) / dtSeconds;
+    }
+    return null;
+  }
+
   _render() {
     if (!this._config || !this.shadowRoot) return;
+    const cardEl = this.shadowRoot.querySelector("ha-card");
+    const showHeader = Boolean(this._config.show_header ?? this._config.show_title ?? true);
+    if (cardEl) cardEl.classList.toggle("no-header", !showHeader);
+
     const title = this._config.title || "Powermesh Zähler";
     const headerEl = this.shadowRoot.querySelector("header h2");
     if (headerEl) headerEl.textContent = title;
@@ -1317,16 +1612,22 @@ export class PowermeshMeterCard extends HTMLElement {
       const rawVal = state && !["unknown", "unavailable"].includes(state.state) ? Number(state.state) : NaN;
       const digits = formatMeterDigits(rawVal, decimals, 6);
 
-      let speed = { duration: 0, reverse: false, active: false, power: 0 };
+      let powerWatts = null;
+      let powerFromGrid = false;
       if (item.disk_power_entity && this._hass?.states?.[item.disk_power_entity]) {
-        const pState = this._hass.states[item.disk_power_entity];
-        const pVal = Number(pState.state);
-        if (Number.isFinite(pVal)) {
-          const pUnit = pState.attributes?.unit_of_measurement;
-          const watts = pUnit === "kW" ? pVal * 1000 : pVal;
-          speed = ferrarisSpeed(watts);
+        powerWatts = extractWatts(this._hass.states[item.disk_power_entity]);
+      } else {
+        // Falls keine Entität für die Momentanleistung angegeben wurde, am Netzbezug orientieren
+        powerWatts = resolveGridImportPower(this._hass, item);
+        if (powerWatts == null) {
+          powerWatts = this._derivePowerFromEnergy(item.entity, rawVal, unit);
+        }
+        if (powerWatts != null) {
+          powerFromGrid = true;
         }
       }
+      const speed = ferrarisSpeed(powerWatts);
+      speed.powerFromGrid = powerFromGrid;
 
       const existing = existingChildren[idx];
       if (
@@ -1370,6 +1671,7 @@ export class PowermeshMeterCard extends HTMLElement {
     });
 
     if (sections.some((s, i) => s !== existingChildren[i]) || sections.length !== existingChildren.length) {
+      this._cleanupOrphanedDiscAnimations();
       body.replaceChildren(...sections);
     }
   }
@@ -1459,20 +1761,20 @@ export class PowermeshMeterCard extends HTMLElement {
     win.append(track);
     chamber.append(win);
 
-    if (item.disk_power_entity) {
-      let powerText;
-      if (!speed.active) {
-        powerText = "0 W · Stillstand";
-      } else if (speed.power < 0) {
-        powerText = `🌿 –${Math.abs(Math.round(speed.power))} W (Einspeisung)`;
-      } else {
-        powerText = `⚡ ${Math.round(speed.power)} W (Bezug)`;
-      }
+    const showPowerBadge = Boolean(item.disk_power_entity || (speed.powerFromGrid && speed.active));
+    if (showPowerBadge) {
+      const label = speed.powerFromGrid ? "Netzbezug" : "Bezug";
+      const powerText = !speed.active
+        ? "0 W · Stillstand"
+        : speed.power < 0
+          ? `🌿 –${Math.abs(Math.round(speed.power))} W (Einspeisung)`
+          : `⚡ ${Math.round(speed.power)} W (${label})`;
       const info = el("div", `ferraris-power-info${speed.power < 0 ? " export" : ""}`, powerText);
       chamber.append(info);
     }
 
     card.append(screws, plate, odoHousing, chamber);
+    this._attachDiscAnimation(track, speed);
     return card;
   }
 
@@ -1515,13 +1817,20 @@ export class PowermeshMeterCard extends HTMLElement {
       track.style.setProperty("--disc-duration", `${speed.duration}s`);
       track.style.setProperty("--disc-direction", speed.reverse ? "reverse" : "normal");
       track.style.setProperty("--disc-play-state", speed.active ? "running" : "paused");
+      this._updateDiscAnimation(track, speed);
     }
     const chamber = existingCard.querySelector(".ferraris-chamber");
     if (chamber) {
       chamber.classList.toggle("solar-export", speed.reverse);
       const info = chamber.querySelector(".ferraris-power-info");
-      if (item.disk_power_entity) {
-        const powerText = !speed.active ? "0 W · Stillstand" : speed.power < 0 ? `🌿 –${Math.abs(Math.round(speed.power))} W (Einspeisung)` : `⚡ ${Math.round(speed.power)} W (Bezug)`;
+      const showPowerBadge = Boolean(item.disk_power_entity || (speed.powerFromGrid && speed.active));
+      if (showPowerBadge) {
+        const label = speed.powerFromGrid ? "Netzbezug" : "Bezug";
+        const powerText = !speed.active
+          ? "0 W · Stillstand"
+          : speed.power < 0
+            ? `🌿 –${Math.abs(Math.round(speed.power))} W (Einspeisung)`
+            : `⚡ ${Math.round(speed.power)} W (${label})`;
         if (info) {
           info.textContent = powerText;
           info.className = `ferraris-power-info${speed.power < 0 ? " export" : ""}`;
@@ -1552,7 +1861,7 @@ export class PowermeshMeterCard extends HTMLElement {
 
     const bottom = el("div", "ebz-lcd-bottom");
     bottom.append(el("span", "ebz-phases", "L1 L2 L3"));
-    if (item.disk_power_entity) {
+    if (item.disk_power_entity || speed.powerFromGrid) {
       const pText = speed.active
         ? `${speed.power < 0 ? "-A " : "+A "}${Math.abs(Math.round(speed.power))} W`
         : "0 W";
@@ -1591,7 +1900,7 @@ export class PowermeshMeterCard extends HTMLElement {
 
     const bottom = el("div", "emh-lcd-bottom");
     bottom.append(el("span", null, "L1 L2 L3"));
-    if (item.disk_power_entity) {
+    if (item.disk_power_entity || speed.powerFromGrid) {
       const pText = speed.active
         ? `${speed.power < 0 ? "◀ -P " : "▶ +P "}${Math.abs(Math.round(speed.power))} W`
         : "P = 0 W";
@@ -1676,6 +1985,7 @@ export class PowermeshMeterCardEditor extends HTMLElement {
     this._form = document.createElement("ha-form");
     this._form.schema = [
       { name: "title", selector: { text: {} } },
+      { name: "show_header", selector: { boolean: {} } },
       { name: "entity", selector: { entity: { domain: "sensor" } } },
       { name: "name", selector: { text: {} } },
       {
@@ -1708,10 +2018,11 @@ export class PowermeshMeterCardEditor extends HTMLElement {
     ];
     this._form.computeLabel = ({ name }) => ({
       title: "Kartentitel (optional)",
+      show_header: "Kopfbereich mit Titel anzeigen",
       entity: "Zähler-Sensor (z. B. Netzbezug, Solarerzeugung)",
       name: "Bezeichnung / Name",
       style: "Visualisierungs-Stil",
-      disk_power_entity: "Momentanleistung für Drehscheibe (optional)",
+      disk_power_entity: "Momentanleistung für Drehscheibe (optional, Standard: Netzbezug)",
       decimals: "Nachkommastellen (Standard: 1)",
       animate_digits: "Zahlenwechsel animieren (Rollenzählwerk)",
     })[name] || name;
@@ -1724,7 +2035,7 @@ export class PowermeshMeterCardEditor extends HTMLElement {
   }
 
   setConfig(config) {
-    this._config = { style: "ferraris", decimals: 1, animate_digits: true, ...config };
+    this._config = { style: "ferraris", decimals: 1, animate_digits: true, show_header: true, ...config };
     this._form.data = this._config;
   }
 

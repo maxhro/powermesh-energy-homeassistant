@@ -101,6 +101,8 @@ const {
   configuredEnergyRoles, bandGeometry, sparklinePath, timelineSegments, numericState,
   smoothHistory, powerHistoryGeometry, formatMeterDigits, ferrarisSpeed, meterStyleConfig,
   VFD_SEGMENTS, renderVfdDigitSvg, PowermeshMeterCard, PowermeshMeterCardEditor,
+  PowermeshEnergyCard, PowermeshAnomalyCard,
+  resolveGridImportPower, simulateDiscPhysics, extractWatts, isPowerSensor,
 } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
 const now = Date.parse('2026-11-05T12:00:00Z');
 const source = (value, unit = 'W', stamp = '2026-11-05T12:00:00Z') => ({
@@ -361,12 +363,145 @@ test('powermesh-meter-card provides editor element, stub config and registers in
   assert.equal(stub.disk_power_entity, 'sensor.grid_power');
   assert.equal(stub.style, 'ferraris');
   assert.equal(stub.animate_digits, true);
+  assert.equal(stub.show_header, true);
   assert.match(cardSource, /value:\s*"ebz"/);
   assert.match(cardSource, /value:\s*"emh"/);
   assert.match(cardSource, /animate_digits/);
+  assert.match(cardSource, /show_header/);
+  assert.match(cardSource, /no-header/);
   assert.match(cardSource, /ferraris-drum-ribbon/);
   assert.match(cardSource, /type:\s*"powermesh-meter-card"/);
   assert.match(cardSource, /name:\s*"Powermesh Zähler"/);
   assert.match(cardSource, /customElements\.define\("powermesh-meter-card", PowermeshMeterCard\)/);
   assert.match(cardSource, /customElements\.define\("powermesh-meter-card-editor", PowermeshMeterCardEditor\)/);
+});
+
+test('all three dashboard cards support optional show_header defaulting to true', () => {
+  const energyStub = PowermeshEnergyCard.getStubConfig({ states: {} });
+  assert.equal(energyStub.show_header, true);
+
+  const anomalyStub = PowermeshAnomalyCard.getStubConfig({ states: {} });
+  assert.equal(anomalyStub.show_header, true);
+
+  const meterStub = PowermeshMeterCard.getStubConfig({ states: {} });
+  assert.equal(meterStub.show_header, true);
+
+  assert.match(cardSource, /ha-card\.no-header header \{ display: none; \}/);
+  assert.match(cardSource, /show_header: "Kopfbereich mit Titel anzeigen"/);
+});
+
+test('resolveGridImportPower falls back to grid import power sources when disk_power_entity is omitted', () => {
+  // 1. Explicit disk_power_entity takes precedence
+  const explicit = resolveGridImportPower({
+    states: {
+      'sensor.custom_p': { state: '750', attributes: { unit_of_measurement: 'W' } },
+      'sensor.grid_import': { state: '1500', attributes: { unit_of_measurement: 'W' } },
+    },
+  }, { entity: 'sensor.energy', disk_power_entity: 'sensor.custom_p' });
+  assert.equal(explicit, 750);
+
+  // 2. Conversion from kW to W
+  const kw = resolveGridImportPower({
+    states: {
+      'sensor.custom_p': { state: '2.5', attributes: { unit_of_measurement: 'kW' } },
+    },
+  }, { disk_power_entity: 'sensor.custom_p' });
+  assert.equal(kw, 2500);
+
+  // 3. Fallback to powermesh overview sensor roles.grid_import_power
+  const overviewFallback = resolveGridImportPower({
+    states: {
+      'sensor.powermesh_overview': {
+        attributes: { roles: { grid_import_power: ['sensor.main_grid_in'] } },
+      },
+      'sensor.main_grid_in': { state: '1234', attributes: { unit_of_measurement: 'W', device_class: 'power' } },
+    },
+  }, { entity: 'sensor.some_meter' });
+  assert.equal(overviewFallback, 1234);
+
+  // 4. Fallback to sibling power sensor
+  const siblingFallback = resolveGridImportPower({
+    states: {
+      'sensor.stromzaehler_bezug': { state: '12000.5', attributes: { unit_of_measurement: 'kWh' } },
+      'sensor.stromzaehler_leistung': { state: '450', attributes: { unit_of_measurement: 'W', device_class: 'power' } },
+    },
+  }, { entity: 'sensor.stromzaehler_bezug' });
+  assert.equal(siblingFallback, 450);
+
+  // 5. Fallback to dedicated Netzbezug sensor
+  const netzbezugFallback = resolveGridImportPower({
+    states: {
+      'sensor.netzbezug': { state: '890', attributes: { unit_of_measurement: 'W', device_class: 'power' } },
+    },
+  }, { entity: 'sensor.random_total' });
+  assert.equal(netzbezugFallback, 890);
+
+  // 6. Fallback to entity itself if already a power sensor
+  const directPower = resolveGridImportPower({
+    states: {
+      'sensor.power_meter': { state: '320', attributes: { unit_of_measurement: 'W', device_class: 'power' } },
+    },
+  }, { entity: 'sensor.power_meter' });
+  assert.equal(directPower, 320);
+
+  // 7. Returns null if no power candidate exists
+  const none = resolveGridImportPower({
+    states: {
+      'sensor.temperature': { state: '21', attributes: { unit_of_measurement: '°C' } },
+    },
+  }, { entity: 'sensor.water_meter' });
+  assert.equal(none, null);
+});
+
+test('simulateDiscPhysics exhibits mechanical component inertia with smooth acceleration and braking', () => {
+  // 1. Smooth spin-up from standstill (target: -25 %/s)
+  let v = 0;
+  const target = -25;
+  v = simulateDiscPhysics(v, target, 0.5, 1.8);
+  assert.ok(v < -5 && v > -8, `After 0.5s, expected ~ -6, got ${v}`);
+
+  // After 2.0s, approaches target
+  for (let i = 0; i < 3; i++) {
+    v = simulateDiscPhysics(v, target, 0.5, 1.8);
+  }
+  assert.ok(v < -15 && v > -23, `After 2.0s, expected ~ -17, got ${v}`);
+
+  // 2. Smooth spin-down when load turns off (target: 0)
+  v = simulateDiscPhysics(v, 0, 0.5, 1.8);
+  assert.ok(v > -18, `Should decelerate towards 0, got ${v}`);
+
+  // Snap to 0 when near standstill
+  const nearZero = simulateDiscPhysics(-0.03, 0, 0.1, 1.8);
+  assert.equal(nearZero, 0);
+
+  // 3. Smooth reversal when switching from import to export
+  v = -20;
+  const exportTarget = 20;
+  v = simulateDiscPhysics(v, exportTarget, 0.5, 1.8);
+  assert.ok(v > -20, 'Should brake towards 0 before reversing');
+  v = simulateDiscPhysics(v, exportTarget, 1.5, 1.8);
+  assert.ok(v > 0, `Should cross zero and accelerate in reverse, got ${v}`);
+});
+
+test('powermesh-meter-card manages realistic disc inertia lifecycle and target velocities', () => {
+  const card = Object.create(PowermeshMeterCard.prototype);
+  card._discAnimations = new Map();
+  assert.equal(typeof card._calcTargetVelocity, 'function');
+
+  // Forward Bezug (power > 0): target velocity is negative (moving right to left)
+  const forward = card._calcTargetVelocity({ active: true, duration: 2.0, reverse: false });
+  assert.equal(forward, -25);
+
+  // Reverse Einspeisung (power < 0): target velocity is positive (moving left to right)
+  const reverse = card._calcTargetVelocity({ active: true, duration: 2.5, reverse: true });
+  assert.equal(reverse, 20);
+
+  // Standstill (active: false): target velocity is 0
+  const still = card._calcTargetVelocity({ active: false, duration: 0, reverse: false });
+  assert.equal(still, 0);
+
+  // Cleanup on disconnect
+  card._discAnimations.set('fakeTrack', { rafId: 123 });
+  card.disconnectedCallback();
+  assert.equal(card._discAnimations.size, 0);
 });
