@@ -12,11 +12,11 @@ const component = 'custom_components/powermesh_energy';
 function fixture(t) {
   const work = join(root, 'tests', `.package-${randomUUID()}`);
   mkdirSync(work);
-  t.after(() => rmSync(work, { recursive: true }));
+  t.after(() => rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   copyFileSync(join(root, 'build-package.ps1'), join(work, 'build-package.ps1'));
   for (const [name, content] of Object.entries({
-    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.5"}',
-    [`${component}/const.py`]: 'VERSION: Final = "0.9.5"\n',
+    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.6"}',
+    [`${component}/const.py`]: 'VERSION: Final = "0.9.6"\n',
     [`${component}/__init__.py`]: '',
     [`${component}/translations/de.json`]: '{}',
     [`${component}/frontend/powermesh-energy-card.js`]: 'export const synthetic = true;',
@@ -60,7 +60,7 @@ test('manual-install ZIP includes exactly component sources and license without 
   assert.equal(existsSync(join(work, 'dist')), false);
   const built = run(work, '-BuildPackage');
   assert.equal(built.status, 0, built.stderr);
-  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.5.zip');
+  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.6.zip');
   assert.deepEqual(zipNames(path), [
     `${component}/__init__.py`, `${component}/const.py`, `${component}/frontend/powermesh-energy-card.js`, `${component}/manifest.json`,
     `${component}/translations/de.json`, 'LICENSE',
@@ -74,7 +74,7 @@ test('version drift, JSON secret files and links are rejected before output', (t
   const work = fixture(t);
   writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "1.0.0"\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
-  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.5"\n');
+  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.6"\n');
   const yaml = join(work, component, 'secrets.yaml');
   writeFileSync(yaml, 'token: SYNTHETIC_NEVER\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
@@ -96,7 +96,12 @@ globalThis.HTMLElement = class {};
 globalThis.customElements = { get: () => undefined, define: () => {} };
 globalThis.window = { customCards: [] };
 const cardSource = readFileSync(join(root, component, 'frontend/powermesh-energy-card.js'), 'utf8');
-const { sourceValue, signedPowerValue, roleEntities, summedSourceValue, averagedSourceValue, configuredEnergyRoles, bandGeometry, sparklinePath, timelineSegments, numericState, smoothHistory, powerHistoryGeometry } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
+const {
+  sourceValue, signedPowerValue, roleEntities, summedSourceValue, averagedSourceValue,
+  configuredEnergyRoles, bandGeometry, sparklinePath, timelineSegments, numericState,
+  smoothHistory, powerHistoryGeometry, formatMeterDigits, ferrarisSpeed, meterStyleConfig,
+  VFD_SEGMENTS, renderVfdDigitSvg, PowermeshMeterCard, PowermeshMeterCardEditor,
+} = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
 const now = Date.parse('2026-11-05T12:00:00Z');
 const source = (value, unit = 'W', stamp = '2026-11-05T12:00:00Z') => ({
   state: value, attributes: { unit_of_measurement: unit }, last_updated: stamp,
@@ -246,4 +251,122 @@ test('optional timeline positions findings in the window and keeps open findings
     { left: 90, width: 10, type: 'no_data', category: 'data_quality', open: true },
   ]);
   assert.deepEqual(timelineSegments([], end, start), []);
+});
+
+test('meter card digit formatter splits integer and decimal drums and flags red decimal drum', () => {
+  const formatted = formatMeterDigits(12345.67, 1, 6);
+  assert.equal(formatted.intStr, '012345');
+  assert.equal(formatted.decStr, '7');
+  assert.equal(formatted.formatted, '012345,7');
+  assert.equal(formatted.digits.length, 7);
+  for (let i = 0; i < 6; i++) {
+    assert.equal(formatted.digits[i].isRed, false);
+    assert.equal(formatted.digits[i].role, 'integer');
+  }
+  assert.equal(formatted.digits[6].isRed, true);
+  assert.equal(formatted.digits[6].role, 'decimal');
+  assert.equal(formatted.digits[6].char, '7');
+  assert.equal(formatted.digits[6].progress, 0.7);
+
+  const integerOnly = formatMeterDigits(42, 0, 5);
+  assert.equal(integerOnly.formatted, '00042');
+  assert.equal(integerOnly.digits.length, 5);
+  assert.ok(integerOnly.digits.every((d) => !d.isRed));
+  assert.equal(integerOnly.digits[4].progress, 0);
+
+  assert.equal(formatMeterDigits(null), null);
+  assert.equal(formatMeterDigits('invalid'), null);
+  assert.equal(formatMeterDigits(NaN), null);
+});
+
+test('ferraris wheel speed scales dynamically with power and reverses on export', () => {
+  const high = ferrarisSpeed(3000);
+  assert.equal(high.active, true);
+  assert.equal(high.reverse, false);
+  assert.equal(high.duration, 0.8);
+
+  const standby = ferrarisSpeed(80);
+  assert.equal(standby.active, true);
+  assert.equal(standby.reverse, false);
+  assert.equal(standby.duration, 30);
+
+  const moderate = ferrarisSpeed(1000);
+  assert.equal(moderate.duration, 2.4);
+
+  const exportPower = ferrarisSpeed(-1200);
+  assert.equal(exportPower.active, true);
+  assert.equal(exportPower.reverse, true);
+  assert.equal(exportPower.duration, 2.0);
+
+  const zero = ferrarisSpeed(0);
+  assert.equal(zero.active, false);
+  assert.equal(zero.duration, 0);
+
+  const trivial = ferrarisSpeed(1.2);
+  assert.equal(trivial.active, false);
+
+  assert.equal(ferrarisSpeed(null).active, false);
+  assert.equal(ferrarisSpeed(NaN).active, false);
+});
+
+test('meter card configuration normalizes single and multi entity setups', () => {
+  const single = meterStyleConfig({
+    entity: 'sensor.stromzaehler_bezug',
+    name: 'Netzbezug',
+    style: 'ferraris',
+    disk_power_entity: 'sensor.leistung',
+    decimals: 1,
+  });
+  assert.equal(single.length, 1);
+  assert.equal(single[0].entity, 'sensor.stromzaehler_bezug');
+  assert.equal(single[0].style, 'ferraris');
+
+  const multi = meterStyleConfig({
+    entities: [
+      { entity: 'sensor.meter1', style: 'ferraris' },
+      { entity: 'sensor.meter2', style: 'ebz' },
+      { entity: 'sensor.meter3', style: 'emh' },
+      'sensor.meter4',
+    ],
+  });
+  assert.equal(multi.length, 4);
+  assert.equal(multi[0].style, 'ferraris');
+  assert.equal(multi[1].style, 'ebz');
+  assert.equal(multi[2].style, 'emh');
+  assert.equal(multi[3].entity, 'sensor.meter4');
+
+  assert.deepEqual(meterStyleConfig(null), []);
+  assert.deepEqual(meterStyleConfig({}), []);
+});
+
+test('vfd 7-segment digit map and svg renderer produce all segments', () => {
+  assert.deepEqual(VFD_SEGMENTS['0'], ['a', 'b', 'c', 'd', 'e', 'f']);
+  assert.deepEqual(VFD_SEGMENTS['8'], ['a', 'b', 'c', 'd', 'e', 'f', 'g']);
+  assert.deepEqual(VFD_SEGMENTS['-'], ['g']);
+  const svg0 = renderVfdDigitSvg('0');
+  assert.match(svg0, /class="seg on".*points="4,2 18,2 16,5 6,5"/);
+  assert.match(svg0, /class="seg off".*points="4,19 6,17 16,17 18,19 16,21 6,21"/);
+});
+
+test('powermesh-meter-card provides editor element, stub config and registers in customCards', () => {
+  assert.equal(typeof PowermeshMeterCard.getConfigElement, 'function');
+  assert.equal(typeof PowermeshMeterCard.getStubConfig, 'function');
+  const stub = PowermeshMeterCard.getStubConfig({
+    states: {
+      'sensor.grid_total': { attributes: { device_class: 'energy', unit_of_measurement: 'kWh' }, entity_id: 'sensor.grid_total' },
+      'sensor.grid_power': { attributes: { device_class: 'power', unit_of_measurement: 'W' }, entity_id: 'sensor.grid_power' },
+    },
+  });
+  assert.equal(stub.entity, 'sensor.grid_total');
+  assert.equal(stub.disk_power_entity, 'sensor.grid_power');
+  assert.equal(stub.style, 'ferraris');
+  assert.equal(stub.animate_digits, true);
+  assert.match(cardSource, /value:\s*"ebz"/);
+  assert.match(cardSource, /value:\s*"emh"/);
+  assert.match(cardSource, /animate_digits/);
+  assert.match(cardSource, /ferraris-drum-ribbon/);
+  assert.match(cardSource, /type:\s*"powermesh-meter-card"/);
+  assert.match(cardSource, /name:\s*"Powermesh Zähler"/);
+  assert.match(cardSource, /customElements\.define\("powermesh-meter-card", PowermeshMeterCard\)/);
+  assert.match(cardSource, /customElements\.define\("powermesh-meter-card-editor", PowermeshMeterCardEditor\)/);
 });

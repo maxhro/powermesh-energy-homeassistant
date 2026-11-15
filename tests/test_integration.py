@@ -115,13 +115,13 @@ async def test_local_entry_setup_options_diagnostics_and_removal(hass):
         assert entry.runtime_data is None
         client.assert_not_called()
         assert resources.call_args.args[0][0].url_path == CARD_URL
-        extra_js.assert_called_once_with(hass, f"{CARD_URL}?v=0.9.5")
+        extra_js.assert_called_once_with(hass, f"{CARD_URL}?v=0.9.6")
         await async_setup_entry(hass, entry)
         assert resources.call_count == 1
         assert extra_js.call_count == 1
     sensor = PowermeshOverviewSensor(entry)
     assert sensor.extra_state_attributes == {CONF_ROLES: {"solar_power": "sensor.solar"}}
-    assert await async_get_config_entry_diagnostics(hass, entry) == {"mode": "local", "integration_version": "0.9.5"}
+    assert await async_get_config_entry_diagnostics(hass, entry) == {"mode": "local", "integration_version": "0.9.6"}
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["step_id"] == "local"
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"grid_import_power": ["sensor.solar", "sensor.other"]})
@@ -183,6 +183,7 @@ async def test_local_card_resource_is_served_by_home_assistant(hass, hass_client
         response = await client.get(CARD_URL)
         assert response.status == 200
         assert 'customElements.define("powermesh-energy-card"' in await response.text()
+        assert 'customElements.define("powermesh-meter-card"' in await response.text()
         transport.assert_not_called()
         assert entry.runtime_data is None
         assert await hass.config_entries.async_reload(entry.entry_id)

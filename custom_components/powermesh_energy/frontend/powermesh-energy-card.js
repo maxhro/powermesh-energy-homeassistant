@@ -1023,3 +1023,730 @@ window.customCards = window.customCards || [];
 if (!window.customCards.some((card) => card.type === "powermesh-energy-card")) {
   window.customCards.push({ type: "powermesh-energy-card", name: "Powermesh Energie", description: "Lokale Energieübersicht", preview: true });
 }
+
+
+export const VFD_SEGMENTS = {
+  "0": ["a", "b", "c", "d", "e", "f"],
+  "1": ["b", "c"],
+  "2": ["a", "b", "d", "e", "g"],
+  "3": ["a", "b", "c", "d", "g"],
+  "4": ["b", "c", "f", "g"],
+  "5": ["a", "c", "d", "f", "g"],
+  "6": ["a", "c", "d", "e", "f", "g"],
+  "7": ["a", "b", "c"],
+  "8": ["a", "b", "c", "d", "e", "f", "g"],
+  "9": ["a", "b", "c", "d", "f", "g"],
+  "-": ["g"],
+};
+
+export function formatMeterDigits(value, decimals = 1, minIntegerDigits = 6) {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  const num = Number(value);
+  const clampedDec = Math.max(0, Math.min(3, Math.round(Number(decimals) || 0)));
+  const factor = 10 ** clampedDec;
+  const rounded = Math.round(num * factor) / factor;
+  const parts = rounded.toFixed(clampedDec).split(".");
+  const intStr = parts[0].padStart(minIntegerDigits, "0");
+  const decStr = parts[1] || "";
+
+  const scaled = num * factor;
+  const fractional = scaled - Math.floor(scaled);
+
+  const digits = [];
+  for (let i = 0; i < intStr.length; i++) {
+    digits.push({ char: intStr[i], isDecimal: false, isRed: false, role: "integer", progress: 0 });
+  }
+  if (clampedDec > 0) {
+    for (let i = 0; i < decStr.length; i++) {
+      const isLast = i === decStr.length - 1;
+      digits.push({
+        char: decStr[i],
+        isDecimal: true,
+        isRed: true,
+        role: "decimal",
+        progress: isLast && fractional > 0.01 && fractional < 0.99 ? Math.round(fractional * 100) / 100 : 0,
+      });
+    }
+  } else if (fractional > 0.01 && fractional < 0.99 && digits.length > 0) {
+    digits[digits.length - 1].progress = Math.round(fractional * 100) / 100;
+  }
+  return {
+    raw: num,
+    intStr,
+    decStr,
+    clampedDec,
+    formatted: clampedDec > 0 ? `${intStr},${decStr}` : intStr,
+    digits,
+  };
+}
+
+export function ferrarisSpeed(powerWatts) {
+  if (powerWatts == null || !Number.isFinite(Number(powerWatts))) {
+    return { duration: 0, reverse: false, active: false, power: 0 };
+  }
+  const power = Number(powerWatts);
+  const abs = Math.abs(power);
+  if (abs < 2) return { duration: 0, reverse: false, active: false, power };
+  const duration = Math.max(0.8, Math.min(30, 2400 / abs));
+  return {
+    duration: Math.round(duration * 10) / 10,
+    reverse: power < 0,
+    active: true,
+    power,
+  };
+}
+
+export function meterStyleConfig(config) {
+  if (!config) return [];
+  if (Array.isArray(config.entities) && config.entities.length > 0) {
+    return config.entities.map((item) => (typeof item === "string" ? { entity: item } : item));
+  }
+  if (config.entity) {
+    return [{
+      entity: config.entity,
+      name: config.name,
+      style: config.style,
+      disk_power_entity: config.disk_power_entity,
+      decimals: config.decimals,
+      unit: config.unit,
+    }];
+  }
+  return [];
+}
+
+export function renderVfdDigitSvg(char) {
+  const active = VFD_SEGMENTS[char] || [];
+  const seg = (id, points) => `<polygon class="seg ${active.includes(id) ? "on" : "off"}" points="${points}" />`;
+  return `<svg viewBox="0 0 24 38" preserveAspectRatio="xMidYMid meet">` +
+    seg("a", "4,2 18,2 16,5 6,5") +
+    seg("b", "19,3 21,5 19,18 17,16 17,5") +
+    seg("c", "19,20 21,22 19,35 17,33 17,22") +
+    seg("d", "4,36 18,36 16,33 6,33") +
+    seg("e", "3,20 5,22 5,33 3,35 1,33 1,22") +
+    seg("f", "3,3 5,5 5,16 3,18 1,16 1,5") +
+    seg("g", "4,19 6,17 16,17 18,19 16,21 6,21") +
+    `</svg>`;
+}
+
+
+export class PowermeshMeterCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; }
+        ha-card { overflow: hidden; border-radius: var(--ha-card-border-radius, 12px); box-sizing: border-box; }
+        header { display: flex; align-items: center; gap: 12px; padding: 16px 20px 10px; }
+        header ha-icon { color: var(--primary-color); flex: none; }
+        h2 { flex: 1; min-width: 0; margin: 0; font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+        .mode-badge { font-size: 11px; font-weight: 500; padding: 3px 8px; border-radius: 10px; background: var(--secondary-background-color); color: var(--secondary-text-color); text-transform: uppercase; letter-spacing: 0.5px; }
+        .meters-body { padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 16px; }
+        .meter-card-empty { padding: 24px 16px; text-align: center; color: var(--secondary-text-color); font-size: 14px; }
+
+        .style-modern { background: var(--card-background-color, #fff); border: 1px solid var(--divider-color, #e0e0e0); border-radius: 8px; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; }
+        .modern-header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--secondary-text-color); }
+        .modern-display { display: flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; }
+        .modern-value { font-size: 34px; font-weight: 700; line-height: 1.1; color: var(--primary-text-color); letter-spacing: -0.5px; }
+        .modern-unit { font-size: 16px; font-weight: 600; color: var(--secondary-text-color); }
+        .modern-meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--secondary-text-color); border-top: 1px solid var(--divider-color, #eee); padding-top: 8px; margin-top: 4px; }
+        .modern-power-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; background: var(--secondary-background-color); font-weight: 500; }
+        .modern-power-badge.export { color: var(--success-color, #10b981); }
+
+        .style-ferraris { background: radial-gradient(ellipse at 50% 15%, #2d2e32 0%, #17181a 60%, #0d0e10 100%); border: 2px solid #3d3e42; border-radius: 12px; padding: 16px 18px 20px; box-shadow: inset 0 1px 1px rgba(255,255,255,0.18), inset 0 -3px 12px rgba(0,0,0,0.8), 0 6px 16px rgba(0,0,0,0.4); position: relative; color: #e5e5e5; display: flex; flex-direction: column; align-items: center; gap: 14px; user-select: none; cursor: pointer; }
+        .ferraris-screws { position: absolute; top: 8px; left: 8px; right: 8px; bottom: 8px; pointer-events: none; }
+        .screw { position: absolute; width: 10px; height: 10px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #888 0%, #444 60%, #222 100%); box-shadow: inset 0 1px 1px rgba(255,255,255,0.3), 0 1px 2px rgba(0,0,0,0.6); }
+        .screw::after { content: ""; position: absolute; top: 4.5px; left: 1.5px; width: 7px; height: 1px; background: #111; box-shadow: 0 1px 0 rgba(255,255,255,0.2); transform: rotate(35deg); }
+        .screw.tl { top: 0; left: 0; }
+        .screw.tr { top: 0; right: 0; }
+        .screw.bl { bottom: 0; left: 0; }
+        .screw.br { bottom: 0; right: 0; }
+        .ferraris-plate { text-align: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: 1px; }
+        .ferraris-brand { font-size: 13px; font-weight: 800; color: #ffb74d; text-shadow: 0 1px 2px rgba(0,0,0,0.8); margin-bottom: 2px; }
+        .ferraris-type { font-size: 9px; letter-spacing: 1.5px; color: #a0a0a0; text-transform: uppercase; }
+        .ferraris-specs { font-size: 9px; letter-spacing: 0.5px; color: #888; margin-top: 2px; }
+        .ferraris-odometer-housing { background: #000; border: 2px solid #2a2a2c; border-radius: 6px; padding: 5px 8px; box-shadow: inset 0 4px 10px rgba(0,0,0,0.95), 0 1px 2px rgba(255,255,255,0.1); display: inline-flex; align-items: center; gap: 2px; }
+        .ferraris-drums { display: flex; gap: 1.5px; background: #111; padding: 2px; border-radius: 4px; }
+        .ferraris-drum { width: 22px; height: 34px; position: relative; overflow: hidden; border-radius: 2px; box-shadow: inset 0 0 2px rgba(0,0,0,0.5); font-family: "Courier New", Courier, monospace; font-size: 22px; font-weight: 800; line-height: 34px; text-align: center; }
+        .ferraris-drum.integer { background-color: #f7f3e8; color: #111; }
+        .ferraris-drum.decimal { background-color: #c62828; color: #fff; }
+        .ferraris-drum-ribbon { display: flex; flex-direction: column; position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
+        .ferraris-drum-ribbon.animated { transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.3, 1); }
+        .ferraris-digit-cell { height: 34px; line-height: 34px; text-align: center; flex: none; }
+
+        .ferraris-drum-shade { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; background-image: linear-gradient(180deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.08) 25%, transparent 45%, transparent 55%, rgba(0,0,0,0.1) 75%, rgba(0,0,0,0.65) 100%); box-shadow: inset 0 1px 1px rgba(255,255,255,0.15); }
+        .ferraris-separator { color: #fff; font-size: 20px; font-weight: bold; padding: 0 1px; }
+        .ferraris-unit-tag { color: #ff3d00; font-weight: 800; font-size: 13px; padding-left: 6px; letter-spacing: 0.5px; }
+        .ferraris-chamber { width: 90%; max-width: 280px; background: #080809; border: 2px solid #222326; border-radius: 6px; padding: 6px 10px; box-shadow: inset 0 3px 8px rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; gap: 6px; transition: box-shadow 0.3s ease; }
+        .ferraris-chamber.solar-export { box-shadow: inset 0 0 14px rgba(16, 185, 129, 0.4), inset 0 3px 8px rgba(0,0,0,0.9); border-color: rgba(16, 185, 129, 0.5); }
+        .ferraris-window { width: 100%; height: 24px; position: relative; overflow: hidden; border-radius: 4px; background: #111; box-shadow: inset 0 2px 4px rgba(0,0,0,0.8); }
+        .ferraris-window-glass { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 2; background: linear-gradient(180deg, rgba(255,255,255,0.2) 0%, transparent 40%, rgba(0,0,0,0.3) 100%); border: 1px solid rgba(255,255,255,0.08); }
+        .ferraris-disc-track { position: absolute; top: 0; left: 0; width: 200%; height: 100%; display: flex; animation: ferraris-spin var(--disc-duration, 0s) linear infinite var(--disc-direction, normal); animation-play-state: var(--disc-play-state, paused); }
+        .ferraris-disc-half { width: 50%; height: 100%; position: relative; background: repeating-linear-gradient(90deg, #8c8d91 0px, #8c8d91 4px, #58595d 5px, #d1d2d6 9px, #707175 14px); }
+        .ferraris-mark { position: absolute; top: 0; bottom: 0; left: 45%; width: 8px; background: #e53935; box-shadow: 0 0 4px #e53935; }
+        @keyframes ferraris-spin { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+        .ferraris-power-info { font-size: 11px; color: #aaa; display: flex; align-items: center; gap: 6px; }
+        .ferraris-power-info.export { color: #34d399; }
+
+        .style-nixie { background: radial-gradient(ellipse at 50% 20%, #1c1108 0%, #0d0703 60%, #050301 100%); border: 2px solid #3d2310; border-radius: 10px; padding: 16px 18px 20px; box-shadow: inset 0 2px 8px rgba(0,0,0,0.9), 0 6px 16px rgba(0,0,0,0.5); display: flex; flex-direction: column; align-items: center; gap: 12px; cursor: pointer; }
+        .nixie-title { color: #ff9d42; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; text-shadow: 0 0 6px rgba(255, 120, 0, 0.4); }
+        .nixie-display { display: inline-flex; align-items: flex-end; gap: 4px; padding: 8px 12px; background: #080402; border: 1px solid #281406; border-radius: 8px; box-shadow: inset 0 4px 12px rgba(0,0,0,0.95), 0 0 15px rgba(255, 100, 0, 0.15); }
+        .nixie-tube { width: 28px; height: 48px; border-radius: 14px 14px 4px 4px; background: radial-gradient(ellipse at 50% 30%, rgba(255, 140, 40, 0.15) 0%, rgba(20, 10, 5, 0.85) 100%); border: 1px solid rgba(255, 170, 70, 0.3); box-shadow: inset 0 0 8px rgba(255, 100, 0, 0.25), 0 0 10px rgba(255, 80, 0, 0.15); position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+        .nixie-tube-glass { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 40%, rgba(0,0,0,0.4) 100%); pointer-events: none; z-index: 2; }
+        .nixie-mesh { position: absolute; top: 4px; left: 4px; right: 4px; bottom: 4px; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,160,80,0.06) 2px, rgba(255,160,80,0.06) 4px); pointer-events: none; z-index: 1; }
+        .nixie-digit { font-family: "Courier New", Courier, monospace; font-size: 32px; font-weight: 700; color: #ffebc0; text-shadow: 0 0 4px #ff9500, 0 0 12px #ff5900, 0 0 24px rgba(255, 68, 0, 0.9); position: relative; z-index: 1; animation: nixie-flicker 4s infinite alternate; }
+        @keyframes nixie-flicker { 0%, 100% { opacity: 1; text-shadow: 0 0 4px #ff9500, 0 0 12px #ff5900, 0 0 24px rgba(255, 68, 0, 0.9); } 50% { opacity: 0.96; text-shadow: 0 0 3px #ff9500, 0 0 10px #ff5900, 0 0 20px rgba(255, 68, 0, 0.75); } 92% { opacity: 0.98; } 94% { opacity: 0.88; } }
+        .nixie-dot-tube { width: 12px; height: 24px; border-radius: 6px; background: rgba(20, 10, 5, 0.85); border: 1px solid rgba(255, 170, 70, 0.25); display: flex; align-items: center; justify-content: center; margin-bottom: 4px; }
+        .nixie-dot { width: 6px; height: 6px; border-radius: 50%; background: #ffebc0; box-shadow: 0 0 4px #ff9500, 0 0 10px #ff5900; }
+        .nixie-unit { color: #ff8a00; font-size: 14px; font-weight: 700; letter-spacing: 1px; text-shadow: 0 0 8px #ff5900; padding-left: 6px; align-self: center; }
+        .style-vfd { background: #04090b; border: 2px solid #0c2024; border-radius: 8px; padding: 16px 20px; box-shadow: inset 0 3px 12px rgba(0,0,0,0.95), 0 4px 14px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 10px; position: relative; overflow: hidden; cursor: pointer; }
+        .vfd-grid-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0, 245, 212, 0.02) 3px, rgba(0, 245, 212, 0.02) 4px); pointer-events: none; z-index: 2; }
+        .vfd-header { display: flex; justify-content: space-between; align-items: center; font-size: 11px; letter-spacing: 1.5px; color: #00ffd5; text-shadow: 0 0 4px rgba(0, 255, 213, 0.5); text-transform: uppercase; z-index: 1; }
+        .vfd-display { display: inline-flex; align-items: flex-end; gap: 4px; padding: 10px 14px; background: #020608; border: 1px solid #0a1f23; border-radius: 6px; box-shadow: inset 0 2px 8px rgba(0,0,0,0.9), 0 0 12px rgba(0, 245, 212, 0.1); z-index: 1; }
+        .vfd-digit { width: 24px; height: 38px; }
+        .vfd-digit svg { width: 100%; height: 100%; filter: drop-shadow(0 0 4px rgba(0, 245, 212, 0.7)); }
+        .vfd-digit .seg.on { fill: #00f5d4; }
+        .vfd-digit .seg.off { fill: rgba(0, 245, 212, 0.06); }
+        .vfd-dot { width: 6px; height: 6px; border-radius: 50%; background: #00f5d4; box-shadow: 0 0 6px #00f5d4; margin: 0 2px 4px 2px; }
+        .vfd-unit { color: #00f5d4; font-size: 14px; font-weight: 700; letter-spacing: 1px; text-shadow: 0 0 6px rgba(0, 245, 212, 0.7); align-self: center; padding-left: 6px; }
+        /* Style 5: EBZ Digitalzähler */
+        .style-ebz { background: linear-gradient(180deg, #eaecef 0%, #d8dce0 100%); border: 2px solid #b8c0c8; border-radius: 10px; padding: 14px 16px; box-shadow: inset 0 1px 1px rgba(255,255,255,0.8), 0 4px 12px rgba(0,0,0,0.3); color: #2c3437; display: flex; flex-direction: column; gap: 10px; cursor: pointer; }
+        .ebz-header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #c0c8d0; padding-bottom: 4px; }
+        .ebz-brand { font-size: 13px; font-weight: 800; letter-spacing: 0.5px; color: #1a2327; }
+        .ebz-sub { font-size: 10px; color: #5a646a; letter-spacing: 0.5px; }
+        .ebz-main { display: flex; gap: 12px; align-items: center; }
+        .ebz-optical-port { width: 40px; height: 40px; border-radius: 50%; background: radial-gradient(circle, #555 0%, #222 45%, #999 50%, #bbb 65%, #666 75%, #333 100%); box-shadow: inset 0 2px 4px rgba(0,0,0,0.8), 0 1px 2px rgba(255,255,255,0.6); display: flex; align-items: center; justify-content: center; gap: 6px; flex: none; }
+        .ebz-diode { width: 5px; height: 5px; border-radius: 50%; background: #111; box-shadow: inset 0 0 2px rgba(0,0,0,0.9); }
+        .ebz-lcd { flex: 1; min-width: 0; background: #c5d4a4; border: 2px solid #8e9b73; border-radius: 5px; padding: 6px 10px; box-shadow: inset 0 2px 6px rgba(0,0,0,0.25); display: flex; flex-direction: column; gap: 4px; font-family: "Courier New", Courier, monospace; }
+        .ebz-lcd-top { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px dotted rgba(30, 40, 20, 0.4); padding-bottom: 2px; }
+        .ebz-obis { font-size: 11px; font-weight: 700; color: #253318; letter-spacing: 0.5px; }
+        .ebz-digits { font-size: 26px; font-weight: 800; color: #15220c; letter-spacing: 1px; }
+        .ebz-unit { font-size: 13px; font-weight: 700; color: #253318; padding-left: 4px; }
+        .ebz-lcd-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 700; color: #253318; }
+        .ebz-phases { letter-spacing: 1px; color: #2f4020; }
+        .ebz-power { color: #15220c; }
+        .ebz-power.export { color: #1a5e20; }
+        .ebz-specs-footer { font-size: 9px; color: #68737a; display: flex; justify-content: space-between; }
+
+        /* Style 6: EMH Smart Meter */
+        .style-emh { background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%); border: 2px solid #ced4da; border-radius: 10px; padding: 14px 16px; box-shadow: inset 0 1px 1px rgba(255,255,255,0.9), 0 4px 12px rgba(0,0,0,0.25); color: #212529; display: flex; flex-direction: column; gap: 10px; cursor: pointer; position: relative; }
+        .emh-stripe { position: absolute; top: 0; left: 16px; right: 16px; height: 3px; background: #0066b2; border-radius: 0 0 3px 3px; }
+        .emh-header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #dee2e6; padding-bottom: 4px; margin-top: 2px; }
+        .emh-logo { font-size: 13px; font-weight: 900; color: #0066b2; letter-spacing: 0.5px; }
+        .emh-model { font-size: 10px; color: #6c757d; font-weight: 600; letter-spacing: 0.5px; }
+        .emh-main { display: flex; gap: 12px; align-items: center; }
+        .emh-optics { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; }
+        .emh-led { width: 7px; height: 7px; border-radius: 50%; background: #ff1744; box-shadow: 0 0 5px rgba(255, 23, 68, 0.8); animation: emh-pulse 1.8s infinite; }
+        .emh-led-label { font-size: 8px; color: #6c757d; font-weight: 700; letter-spacing: 0.2px; }
+        @keyframes emh-pulse { 0%, 100% { opacity: 0.3; transform: scale(0.9); } 50% { opacity: 1; transform: scale(1.1); } }
+        .emh-optical-port { width: 34px; height: 34px; border-radius: 50%; background: radial-gradient(circle, #222 0%, #111 60%, #888 70%, #444 100%); border: 1px solid #777; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 13px; }
+        .emh-lcd { flex: 1; min-width: 0; background: #d4dde2; border: 2px solid #9aa8b2; border-radius: 6px; padding: 6px 10px; box-shadow: inset 0 2px 6px rgba(0,0,0,0.2); display: flex; flex-direction: column; gap: 4px; font-family: "Courier New", Courier, monospace; }
+        .emh-lcd-top { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid rgba(24, 34, 38, 0.2); padding-bottom: 2px; }
+        .emh-tariff { font-size: 9px; font-weight: 800; padding: 1px 3px; background: rgba(24, 34, 38, 0.15); border-radius: 2px; color: #182226; }
+        .emh-obis { font-size: 11px; font-weight: 700; color: #182226; margin-left: 3px; }
+        .emh-digits { font-size: 26px; font-weight: 800; color: #0f1619; letter-spacing: 1px; }
+        .emh-unit { font-size: 13px; font-weight: 700; color: #182226; padding-left: 4px; }
+        .emh-lcd-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 700; color: #182226; }
+        .emh-power { display: flex; align-items: center; gap: 4px; }
+        .emh-power.export { color: #00796b; }
+        .emh-specs-footer { font-size: 9px; color: #6c757d; display: flex; justify-content: space-between; }
+
+      </style>
+      <ha-card>
+        <header>
+          <ha-icon icon="mdi:counter"></ha-icon>
+          <h2></h2>
+          <span class="mode-badge">Zähler</span>
+        </header>
+        <div class="meters-body"></div>
+      </ha-card>`;
+  }
+
+  static getConfigElement() { return document.createElement("powermesh-meter-card-editor"); }
+
+  static getStubConfig(hass) {
+    const candidates = hass && hass.states ? Object.values(hass.states) : [];
+    const energyEntity = candidates.find(
+      (s) => s.attributes?.device_class === "energy" || s.attributes?.unit_of_measurement === "kWh"
+    )?.entity_id;
+    const powerEntity = candidates.find(
+      (s) => s.attributes?.device_class === "power" || ["W", "kW"].includes(s.attributes?.unit_of_measurement)
+    )?.entity_id;
+    return {
+      entity: energyEntity || "",
+      name: "Netzbezug",
+      style: "ferraris",
+      decimals: 1,
+      disk_power_entity: powerEntity || "",
+      animate_digits: true,
+    };
+  }
+
+  setConfig(config) {
+    if (!config) throw new Error("Ungültige Kartenkonfiguration");
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+  _render() {
+    if (!this._config || !this.shadowRoot) return;
+    const title = this._config.title || "Powermesh Zähler";
+    const headerEl = this.shadowRoot.querySelector("header h2");
+    if (headerEl) headerEl.textContent = title;
+    const body = this.shadowRoot.querySelector(".meters-body");
+    if (!body) return;
+
+    const items = meterStyleConfig(this._config);
+    if (!items.length) {
+      body.innerHTML = '<div class="meter-card-empty">Zähler-Sensor in den Karteneinstellungen auswählen.</div>';
+      return;
+    }
+
+    const language = this._hass?.locale?.language || "de";
+    const existingChildren = [...body.children];
+    const sections = items.map((item, idx) => {
+      const state = this._hass?.states?.[item.entity];
+      const style = item.style || "modern";
+      const name = item.name || state?.attributes?.friendly_name || item.entity || "Zähler";
+      const unit = item.unit || state?.attributes?.unit_of_measurement || "kWh";
+      const decimals = item.decimals != null ? item.decimals : 1;
+      const rawVal = state && !["unknown", "unavailable"].includes(state.state) ? Number(state.state) : NaN;
+      const digits = formatMeterDigits(rawVal, decimals, 6);
+
+      let speed = { duration: 0, reverse: false, active: false, power: 0 };
+      if (item.disk_power_entity && this._hass?.states?.[item.disk_power_entity]) {
+        const pState = this._hass.states[item.disk_power_entity];
+        const pVal = Number(pState.state);
+        if (Number.isFinite(pVal)) {
+          const pUnit = pState.attributes?.unit_of_measurement;
+          const watts = pUnit === "kW" ? pVal * 1000 : pVal;
+          speed = ferrarisSpeed(watts);
+        }
+      }
+
+      const existing = existingChildren[idx];
+      if (
+        style === "ferraris" &&
+        existing &&
+        existing.dataset?.style === "ferraris" &&
+        existing.dataset?.entity === item.entity &&
+        digits &&
+        existing.querySelectorAll(".ferraris-drum-ribbon").length === digits.digits.length
+      ) {
+        return this._updateFerraris(existing, item, name, state, digits, speed, unit);
+      }
+
+      let section;
+      if (style === "ferraris") {
+        section = this._renderFerraris(item, name, state, digits, speed, unit);
+      } else if (style === "ebz") {
+        section = this._renderEbz(item, name, state, digits, speed, unit);
+      } else if (style === "emh") {
+        section = this._renderEmh(item, name, state, digits, speed, unit);
+      } else if (style === "nixie") {
+        section = this._renderNixie(item, name, state, digits, unit);
+      } else if (style === "vfd") {
+        section = this._renderVfd(item, name, state, digits, unit);
+      } else {
+        section = this._renderModern(item, name, state, digits, speed, unit, language);
+      }
+      section.dataset.style = style;
+      section.dataset.entity = item.entity;
+
+      if (state && item.entity) {
+        section.addEventListener("click", () => {
+          this.dispatchEvent(new CustomEvent("hass-more-info", {
+            detail: { entityId: item.entity },
+            bubbles: true,
+            composed: true,
+          }));
+        });
+      }
+      return section;
+    });
+
+    if (sections.some((s, i) => s !== existingChildren[i]) || sections.length !== existingChildren.length) {
+      body.replaceChildren(...sections);
+    }
+  }
+
+  _renderModern(item, name, state, digits, speed, unit, language) {
+    const card = el("div", "style-modern");
+    const header = el("div", "modern-header");
+    header.append(el("span", null, name));
+    if (speed.active) {
+      const pText = `${speed.power < 0 ? "🌿 " : "⚡ "}${Math.abs(Math.round(speed.power))} W`;
+      const pBadge = el("span", `modern-power-badge${speed.power < 0 ? " export" : ""}`, pText);
+      header.append(pBadge);
+    }
+    const display = el("div", "modern-display");
+    const valText = digits ? digits.formatted : "–";
+    display.append(el("span", "modern-value", valText), el("span", "modern-unit", unit));
+    const meta = el("div", "modern-meta");
+    const stamp = state?.last_updated ? formatTime(state.last_updated, language) : "Nicht verfügbar";
+    meta.append(el("span", null, `Stand: ${stamp}`));
+    card.append(header, display, meta);
+    return card;
+  }
+  _renderFerraris(item, name, state, digits, speed, unit) {
+    const animate = item.animate_digits ?? this._config.animate_digits ?? true;
+    const card = el("div", "style-ferraris");
+
+    const screws = el("div", "ferraris-screws");
+    ["tl", "tr", "bl", "br"].forEach((pos) => screws.append(el("div", `screw ${pos}`)));
+
+    const plate = el("div", "ferraris-plate");
+    plate.append(
+      el("div", "ferraris-brand", "POWERMESH · WECHSELSTROMZÄHLER"),
+      el("div", "ferraris-type", name),
+      el("div", "ferraris-specs", "10(40) A · 230 V · 50 Hz · 375 U/kWh")
+    );
+
+    const odoHousing = el("div", "ferraris-odometer-housing");
+    const drums = el("div", "ferraris-drums");
+    if (digits) {
+      digits.digits.forEach((d, idx) => {
+        if (d.role === "decimal" && d === digits.digits.find((x) => x.role === "decimal")) {
+          drums.append(el("span", "ferraris-separator", ","));
+        }
+        const drum = el("div", `ferraris-drum ${d.isRed ? "decimal" : "integer"}`);
+        drum.dataset.drumIndex = String(idx);
+        const num = Number(d.char);
+        if (Number.isInteger(num) && num >= 0 && num <= 9) {
+          const ribbon = el("div", `ferraris-drum-ribbon${animate ? " animated" : ""}`);
+          ribbon.dataset.current = String(num);
+          for (let digit = 0; digit <= 9; digit++) {
+            ribbon.append(el("div", "ferraris-digit-cell", String(digit)));
+          }
+          ribbon.append(el("div", "ferraris-digit-cell", "0"));
+          const progress = d.progress || 0;
+          ribbon.style.transform = `translateY(-${(num + progress) * 34}px)`;
+          drum.append(ribbon);
+        } else {
+          drum.append(el("div", "ferraris-digit-cell", d.char));
+        }
+        drum.append(el("div", "ferraris-drum-shade"));
+        drums.append(drum);
+      });
+    } else {
+      for (let i = 0; i < 6; i++) {
+        const drum = el("div", "ferraris-drum integer");
+        drum.append(el("div", "ferraris-digit-cell", "–"));
+        drum.append(el("div", "ferraris-drum-shade"));
+        drums.append(drum);
+      }
+    }
+    odoHousing.append(drums, el("span", "ferraris-unit-tag", unit));
+
+    const chamber = el("div", `ferraris-chamber${speed.reverse ? " solar-export" : ""}`);
+    const win = el("div", "ferraris-window");
+    win.append(el("div", "ferraris-window-glass"));
+
+    const track = el("div", "ferraris-disc-track");
+    track.style.setProperty("--disc-duration", `${speed.duration}s`);
+    track.style.setProperty("--disc-direction", speed.reverse ? "reverse" : "normal");
+    track.style.setProperty("--disc-play-state", speed.active ? "running" : "paused");
+
+    const half1 = el("div", "ferraris-disc-half");
+    half1.append(el("div", "ferraris-mark"));
+    const half2 = el("div", "ferraris-disc-half");
+    half2.append(el("div", "ferraris-mark"));
+    track.append(half1, half2);
+    win.append(track);
+    chamber.append(win);
+
+    if (item.disk_power_entity) {
+      let powerText;
+      if (!speed.active) {
+        powerText = "0 W · Stillstand";
+      } else if (speed.power < 0) {
+        powerText = `🌿 –${Math.abs(Math.round(speed.power))} W (Einspeisung)`;
+      } else {
+        powerText = `⚡ ${Math.round(speed.power)} W (Bezug)`;
+      }
+      const info = el("div", `ferraris-power-info${speed.power < 0 ? " export" : ""}`, powerText);
+      chamber.append(info);
+    }
+
+    card.append(screws, plate, odoHousing, chamber);
+    return card;
+  }
+
+  _updateFerraris(existingCard, item, name, state, digits, speed, unit) {
+    const animate = item.animate_digits ?? this._config.animate_digits ?? true;
+    if (digits) {
+      const drums = existingCard.querySelectorAll(".ferraris-drum");
+      digits.digits.forEach((d, idx) => {
+        const drum = drums[idx];
+        if (!drum) return;
+        const ribbon = drum.querySelector(".ferraris-drum-ribbon");
+        const num = Number(d.char);
+        if (ribbon && Number.isInteger(num)) {
+          const oldVal = Number(ribbon.dataset.current ?? 0);
+          if (oldVal !== num) {
+            ribbon.dataset.current = String(num);
+            const progress = d.progress || 0;
+            if (animate) {
+              ribbon.classList.add("animated");
+              if (oldVal === 9 && num === 0) {
+                ribbon.style.transform = `translateY(-${(10 + progress) * 34}px)`;
+                ribbon.addEventListener("transitionend", () => {
+                  ribbon.classList.remove("animated");
+                  ribbon.style.transform = `translateY(-${progress * 34}px)`;
+                }, { once: true });
+              } else {
+                ribbon.style.transform = `translateY(-${(num + progress) * 34}px)`;
+              }
+            } else {
+              ribbon.classList.remove("animated");
+              ribbon.style.transform = `translateY(-${(num + progress) * 34}px)`;
+            }
+          }
+        }
+      });
+    }
+
+    const track = existingCard.querySelector(".ferraris-disc-track");
+    if (track) {
+      track.style.setProperty("--disc-duration", `${speed.duration}s`);
+      track.style.setProperty("--disc-direction", speed.reverse ? "reverse" : "normal");
+      track.style.setProperty("--disc-play-state", speed.active ? "running" : "paused");
+    }
+    const chamber = existingCard.querySelector(".ferraris-chamber");
+    if (chamber) {
+      chamber.classList.toggle("solar-export", speed.reverse);
+      const info = chamber.querySelector(".ferraris-power-info");
+      if (item.disk_power_entity) {
+        const powerText = !speed.active ? "0 W · Stillstand" : speed.power < 0 ? `🌿 –${Math.abs(Math.round(speed.power))} W (Einspeisung)` : `⚡ ${Math.round(speed.power)} W (Bezug)`;
+        if (info) {
+          info.textContent = powerText;
+          info.className = `ferraris-power-info${speed.power < 0 ? " export" : ""}`;
+        } else {
+          chamber.append(el("div", `ferraris-power-info${speed.power < 0 ? " export" : ""}`, powerText));
+        }
+      } else if (info) {
+        info.remove();
+      }
+    }
+    return existingCard;
+  }
+
+  _renderEbz(item, name, state, digits, speed, unit) {
+    const card = el("div", "style-ebz");
+    const header = el("div", "ebz-header");
+    header.append(el("span", "ebz-brand", "EBZ · DD3 2R06"), el("span", "ebz-sub", name));
+
+    const main = el("div", "ebz-main");
+    const port = el("div", "ebz-optical-port");
+    port.append(el("div", "ebz-diode"), el("div", "ebz-diode"));
+
+    const lcd = el("div", "ebz-lcd");
+    const top = el("div", "ebz-lcd-top");
+    const obis = speed.reverse ? "2.8.0" : "1.8.0";
+    const valText = digits ? digits.formatted : "–";
+    top.append(el("span", "ebz-obis", obis), el("span", "ebz-digits", valText), el("span", "ebz-unit", unit));
+
+    const bottom = el("div", "ebz-lcd-bottom");
+    bottom.append(el("span", "ebz-phases", "L1 L2 L3"));
+    if (item.disk_power_entity) {
+      const pText = speed.active
+        ? `${speed.power < 0 ? "-A " : "+A "}${Math.abs(Math.round(speed.power))} W`
+        : "0 W";
+      bottom.append(el("span", `ebz-power${speed.power < 0 ? " export" : ""}`, pText));
+    } else {
+      bottom.append(el("span", "ebz-power", "+A"));
+    }
+    lcd.append(top, bottom);
+    main.append(port, lcd);
+
+    const footer = el("div", "ebz-specs-footer");
+    footer.append(el("span", null, "3x230/400V 50Hz · Cl. A"), el("span", null, "DTA - SMZ"));
+
+    card.append(header, main, footer);
+    return card;
+  }
+
+  _renderEmh(item, name, state, digits, speed, unit) {
+    const card = el("div", "style-emh");
+    card.append(el("div", "emh-stripe"));
+
+    const header = el("div", "emh-header");
+    header.append(el("span", "emh-logo", "EMH metering"), el("span", "emh-model", `mMe4.0 · ${name}`));
+
+    const main = el("div", "emh-main");
+    const optics = el("div", "emh-optics");
+    optics.append(el("div", "emh-led"), el("span", "emh-led-label", "10.000 Imp."), el("div", "emh-optical-port", "🔦"));
+
+    const lcd = el("div", "emh-lcd");
+    const top = el("div", "emh-lcd-top");
+    const obis = speed.reverse ? "2.8.0" : "1.8.0";
+    const valText = digits ? digits.formatted : "–";
+    const obisWrap = el("div", null);
+    obisWrap.append(el("span", "emh-tariff", "T1"), el("span", "emh-obis", obis));
+    top.append(obisWrap, el("span", "emh-digits", valText), el("span", "emh-unit", unit));
+
+    const bottom = el("div", "emh-lcd-bottom");
+    bottom.append(el("span", null, "L1 L2 L3"));
+    if (item.disk_power_entity) {
+      const pText = speed.active
+        ? `${speed.power < 0 ? "◀ -P " : "▶ +P "}${Math.abs(Math.round(speed.power))} W`
+        : "P = 0 W";
+      bottom.append(el("span", `emh-power${speed.power < 0 ? " export" : ""}`, pText));
+    } else {
+      bottom.append(el("span", "emh-power", "▶ +P"));
+    }
+    bottom.append(el("span", "emh-lock", "🔓"));
+    lcd.append(top, bottom);
+    main.append(optics, lcd);
+
+    const footer = el("div", "emh-specs-footer");
+    footer.append(el("span", null, "3x230/400V · 5(60)A · 50Hz"), el("span", null, "ED300L"));
+
+    card.append(header, main, footer);
+    return card;
+  }
+
+  _renderNixie(item, name, state, digits, unit) {
+    const card = el("div", "style-nixie");
+    card.append(el("div", "nixie-title", name));
+    const display = el("div", "nixie-display");
+
+    if (digits) {
+      digits.digits.forEach((d) => {
+        if (d.role === "decimal" && d === digits.digits.find((x) => x.role === "decimal")) {
+          const dotTube = el("div", "nixie-dot-tube");
+          dotTube.append(el("div", "nixie-dot"));
+          display.append(dotTube);
+        }
+        const tube = el("div", "nixie-tube");
+        tube.append(el("div", "nixie-tube-glass"), el("div", "nixie-mesh"), el("span", "nixie-digit", d.char));
+        display.append(tube);
+      });
+    } else {
+      for (let i = 0; i < 6; i++) {
+        const tube = el("div", "nixie-tube");
+        tube.append(el("div", "nixie-tube-glass"), el("div", "nixie-mesh"), el("span", "nixie-digit", "–"));
+        display.append(tube);
+      }
+    }
+    display.append(el("span", "nixie-unit", unit));
+    card.append(display);
+    return card;
+  }
+
+  _renderVfd(item, name, state, digits, unit) {
+    const card = el("div", "style-vfd");
+    card.append(el("div", "vfd-grid-overlay"));
+    const header = el("div", "vfd-header");
+    header.append(el("span", null, name), el("span", null, "VFD 80s"));
+    card.append(header);
+
+    const display = el("div", "vfd-display");
+    if (digits) {
+      digits.digits.forEach((d) => {
+        if (d.role === "decimal" && d === digits.digits.find((x) => x.role === "decimal")) {
+          display.append(el("div", "vfd-dot"));
+        }
+        const digitWrap = el("div", "vfd-digit");
+        digitWrap.innerHTML = renderVfdDigitSvg(d.char);
+        display.append(digitWrap);
+      });
+    } else {
+      for (let i = 0; i < 6; i++) {
+        const digitWrap = el("div", "vfd-digit");
+        digitWrap.innerHTML = renderVfdDigitSvg("-");
+        display.append(digitWrap);
+      }
+    }
+    display.append(el("span", "vfd-unit", unit));
+    card.append(display);
+    return card;
+  }
+}
+
+
+export class PowermeshMeterCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._form = document.createElement("ha-form");
+    this._form.schema = [
+      { name: "title", selector: { text: {} } },
+      { name: "entity", selector: { entity: { domain: "sensor" } } },
+      { name: "name", selector: { text: {} } },
+      {
+        name: "style",
+        selector: {
+          select: {
+            mode: "dropdown",
+            options: [
+              { value: "ferraris", label: "Retro Ferraris (Rollenzählwerk & Drehscheibe)" },
+              { value: "ebz", label: "EBZ Digitalzähler (DD3 / mMe)" },
+              { value: "emh", label: "EMH Smart Meter (mMe4.0 / eHZ)" },
+              { value: "modern", label: "Modern Clean" },
+              { value: "nixie", label: "Nixie Tubes" },
+              { value: "vfd", label: "80s Retro VFD / 7-Segment" },
+            ],
+          },
+        },
+      },
+      {
+        name: "disk_power_entity",
+        selector: {
+          entity: {
+            domain: "sensor",
+            device_class: ["power"],
+          },
+        },
+      },
+      { name: "decimals", selector: { number: { min: 0, max: 3, mode: "box" } } },
+      { name: "animate_digits", selector: { boolean: {} } },
+    ];
+    this._form.computeLabel = ({ name }) => ({
+      title: "Kartentitel (optional)",
+      entity: "Zähler-Sensor (z. B. Netzbezug, Solarerzeugung)",
+      name: "Bezeichnung / Name",
+      style: "Visualisierungs-Stil",
+      disk_power_entity: "Momentanleistung für Drehscheibe (optional)",
+      decimals: "Nachkommastellen (Standard: 1)",
+      animate_digits: "Zahlenwechsel animieren (Rollenzählwerk)",
+    })[name] || name;
+    this._form.addEventListener("value-changed", (event) => {
+      event.stopPropagation();
+      this._config = { ...this._config, ...event.detail.value };
+      this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
+    });
+    this.shadowRoot.append(this._form);
+  }
+
+  setConfig(config) {
+    this._config = { style: "ferraris", decimals: 1, animate_digits: true, ...config };
+    this._form.data = this._config;
+  }
+
+  set hass(hass) {
+    this._form.hass = hass;
+  }
+}
+
+if (!customElements.get("powermesh-meter-card")) customElements.define("powermesh-meter-card", PowermeshMeterCard);
+if (!customElements.get("powermesh-meter-card-editor")) customElements.define("powermesh-meter-card-editor", PowermeshMeterCardEditor);
+window.customCards = window.customCards || [];
+if (!window.customCards.some((card) => card.type === "powermesh-meter-card")) {
+  window.customCards.push({
+    type: "powermesh-meter-card",
+    name: "Powermesh Zähler",
+    description: "Multistyle-Zählerkarte (Retro Ferraris, EBZ, EMH, Modern Clean, Nixie, 80s VFD)",
+    preview: true,
+  });
+}
+
+
+
+
+
+

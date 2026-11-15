@@ -195,6 +195,75 @@ history_hours: 6
 smoothing_minutes: 5
 ```
 
+
+**Powermesh Zähler** (`custom:powermesh-meter-card`) visualisiert Zählerstände
+(z. B. Netzbezug, Netzeinspeisung, Solarerzeugung, Wärmepumpe oder Wallbox) in
+sechs frei wählbaren Stilen und ist im Dashboard-Designer interaktiv konfigurierbar:
+
+- **Retro Ferraris (Mechanisches Rollenzählwerk & Drehscheibe):** Schwarzes
+  Bakelit-Gehäuse mit Glasspiegelung, rotierendes Rollenzählwerk mit roter Walze
+  für die Nachkommastelle mit flüssigem mechanischem Zahlenübergang (Mechanical Carry-Over)
+  sowie horizontal rotierende Aluminium-Drehscheibe mit
+  roter Eichmarkierung. Die Drehgeschwindigkeit koppelt an die Momentanleistung
+  (`disk_power_entity`); bei Überschuss/Einspeisung dreht sich die Scheibe
+  rückwärts und leuchtet smaragdgrün auf. Der Zahlenwechsel der Walzen lässt
+  sich optional per `animate_digits: true / false` steuern.
+- **EBZ Digitalzähler (mMe / DD3):** Authentischer digitaler Haushaltszähler
+  (moderne Messeinrichtung) im typischen Industrie-Kunststoffgehäuse mit
+  grün-grauem LCD-Display, OBIS-Kennziffern (`1.8.0` Bezug / `2.8.0` Einspeisung),
+  Phasenanzeigen (`L1 L2 L3`), Momentanleistung (`+A` / `-A`) und metallischer D0-Magnetring-Schnittstelle.
+- **EMH Smart Meter (mMe4.0 / eHZ):** Moderner deutscher Steckzähler / Smart Meter
+  mit blauem EMH-Akzentstreifen, rot pulsierender 10.000 Imp./kWh Prüf-LED,
+  optischer Taschenlampen-PIN-Schnittstelle 🔦, Tarif-Kennzeichnung (`T1`),
+  OBIS-Zählerstandsanzeige, Phasen und Freischaltsymbol 🔓.
+- **Modern Clean:** Minimalistische, kontrastreiche Typografie mit
+  Zählerstand, Einheit und Momentanleistungs-Badge.
+- **Nixie Tubes:** Warm glimmende orange Neon-Nixie-Röhren im Glaszylinder mit
+  Kathodenglimmen und Dezimalpunkt-Röhre.
+- **80s Retro VFD:** Vakuum-Fluoreszenz-Display im HiFi-Stil der 80er-Jahre mit
+  türkis leuchtenden 7-Segment-Ziffern und feinem Gitternetz.
+
+![Karte Powermesh Zähler im Retro-Ferraris-Design](docs/screenshots/zaehler-karte-ferraris.png)
+
+```yaml
+type: custom:powermesh-meter-card
+entity: sensor.stromzaehler_bezug
+name: Netzbezug
+style: ferraris
+disk_power_entity: sensor.aktuelle_leistung
+decimals: 1
+animate_digits: true # optional: Mechanischen Zahlenwechsel animieren (Standard: true)
+```
+
+Digitale Standardzähler (EBZ & EMH) wie im Zählerschrank:
+
+| EBZ Digitalzähler (mMe / DD3) | EMH Smart Meter (mMe4.0 / eHZ) |
+|:---:|:---:|
+| ![EBZ Digitalzähler](docs/screenshots/zaehler-karte-ebz.png) | ![EMH Smart Meter](docs/screenshots/zaehler-karte-emh.png) |
+
+Die Stile `modern`, `nixie` und `vfd` stehen ebenfalls zur Auswahl:
+
+| Modern Clean | Nixie Tubes | 80s Retro VFD |
+|:---:|:---:|:---:|
+| ![Modern Clean](docs/screenshots/zaehler-karte-modern.png) | ![Nixie Tubes](docs/screenshots/zaehler-karte-nixie.png) | ![80s Retro VFD](docs/screenshots/zaehler-karte-vfd.png) |
+
+Für mehrere Zähler auf einer gemeinsamen Karte (z. B. Netzbezug und Solaranlage):
+
+![Karte Powermesh Zähler mit zwei Zählern](docs/screenshots/zaehler-karte-dual.png)
+
+```yaml
+type: custom:powermesh-meter-card
+entities:
+  - entity: sensor.stromzaehler_bezug
+    name: Netzbezug
+    style: ferraris
+    disk_power_entity: sensor.aktuelle_leistung
+  - entity: sensor.pv_erzeugung_total
+    name: Solaranlage (PV-Ertrag)
+    style: ferraris
+    disk_power_entity: sensor.pv_leistung
+```
+
 Jeweils den tatsächlichen Entitätsnamen aus HA verwenden. Anklicken eines
 Sensors öffnet die HA-Sensoransicht. Native Handy-Widgets sind nicht enthalten.
 
@@ -206,7 +275,7 @@ Version installieren und Home Assistant danach neu starten.
 
 ## Versionen
 
-Diese Integration ist ein Prototyp in Version **0.9.5**. Sie wird unabhängig von
+Diese Integration ist ein Prototyp in Version **0.9.6**. Sie wird unabhängig von
 der Website powermesh.de versioniert und benötigt keinen Dienst.
 
 ## Lokale Tests
@@ -220,7 +289,7 @@ pwsh -NoProfile -File ./build-package.ps1 -DryRun
 pwsh -NoProfile -File ./build-package.ps1 -BuildPackage
 ```
 
-Das Archiv `dist/powermesh-energy-homeassistant-0.9.5.zip` enthält
+Das Archiv `dist/powermesh-energy-homeassistant-0.9.6.zip` enthält
 `custom_components/powermesh_energy` und die Lizenz, keine Testumgebung, Caches
 oder Zugangsdaten. Vorhandene Archive werden nicht überschrieben.
 Den enthaltenen Komponentenordner in das Konfigurationsverzeichnis von

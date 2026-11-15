@@ -2,15 +2,18 @@
 
 ## Current baseline
 
-- Version `0.9.5` prototype: local anomaly monitoring (`monitor.py`,
-  `monitor_flow.py`). Owner-confirmed sensors (max 50) suggested from areas,
-  labels and devices: learned EWMA normal range for power/temperature/humidity,
-  counter glitch/decrease checks for `total_increasing` energy, no-data checks,
-  acknowledge service, persistent/notify-entity messages, findings sensor,
-  problem binary sensor and `powermesh-anomaly-card`. The local energy overview
-  supports multiple sources per area, optional power sums, battery percentage
-  averages and combined signed grid/battery power. Anomaly-history charts use
-  display-only time-weighted smoothing. Bounded learning state
+- Version `0.9.6` prototype: local anomaly monitoring (`monitor.py`,
+  `monitor_flow.py`), local energy overview and the multi-style Powermesh Zähler
+  meter card (`powermesh-meter-card`). Owner-confirmed sensors (max 50) suggested
+  from areas, labels and devices: learned EWMA normal range for
+  power/temperature/humidity, counter glitch/decrease checks for `total_increasing`
+  energy, no-data checks, acknowledge service, persistent/notify-entity messages,
+  findings sensor, problem binary sensor and `powermesh-anomaly-card`. The local
+  energy overview supports multiple sources per area, optional power sums,
+  battery percentage averages and combined signed grid/battery power. Anomaly-history
+  charts use display-only time-weighted smoothing. The meter card visualizes
+  meter readings in six styles (retro Ferraris with spinning disc, EBZ, EMH,
+  modern, nixie, and 80s VFD). Bounded learning state
   stays in private HA storage and is removed with the entry. No AI, no cloud,
   no control, no savings promises.
 - The powermesh.de REST transfer is disabled via
