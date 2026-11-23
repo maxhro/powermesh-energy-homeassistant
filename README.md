@@ -160,7 +160,7 @@ Optional im Karteneditor zuschaltbar (standardmäßig aus):
 |---|---|
 | `show_header` (Standard: `true`) | Kopfbereich mit Titel und Badge anzeigen; bei `false` wird der Header ausgeblendet und der Inhalt rückt bündig nach oben. |
 | `show_learning_bar` | Lernfortschritt als Balken |
-| `show_history`, `history_hours` (1–48, Standard 6) | Verlaufsdiagramm je Sensor mit eingezeichnetem Normalbereich; liest nur die vorhandene HA-Historie |
+| `show_history`, `history_hours` (1–48, Standard 6) | Verlaufsdiagramm je Sensor mit Raster, Zeit- und Wertachse in der Sensoreinheit und, soweit vorhanden, eingezeichnetem Normalbereich. Liest nur die vorhandene HA-Historie. |
 | `smoothing_minutes` (0–60, Standard 5) | Zeitgewichtete Glättung nur für die Diagrammanzeige; `0` zeigt die Rohkurve. Sensorwerte, Recorder und Anomalieerkennung bleiben unverändert. |
 | `show_timeline`, `timeline_days` (1–30, Standard 7) | Zeitleiste offener und beendeter Auffälligkeiten, getrennt nach Verhalten und Datenqualität |
 
@@ -183,9 +183,10 @@ Optional im Karteneditor zuschaltbar (standardmäßig aus):
 | `average_battery_soc` | Mehrere Akkustände als Mittelwert anzeigen; bei unvollständigen Quellen wird kein Teilmittelwert ausgegeben. |
 | `grid_power_entity` | Optionaler kombinierter Netzsensor mit Vorzeichenwechsel. Er ersetzt getrennte Netzbezugs-/Einspeisesensoren. `grid_negative_is_export` legt fest, ob negative Werte Einspeisung bedeuten (Standard: ja). |
 | `battery_power_entity` | Optionaler kombinierter Batterieleistungssensor. `battery_negative_is_discharge` legt fest, ob negative Werte Entladen bedeuten (Standard: ja). |
-| `show_history` | Leistungsverlauf für ausgewählte Solar-, Netzbezugs- und Einspeisesensoren mit Raster, Zeitachse und Legende. Liest die vorhandene HA-Historie; der Akkustand wird nicht mit Leistung vermischt. |
+| `show_history` | Leistungsverlauf für ausgewählte Leistungsquellen mit Raster, Zeit- und Wertachse und Legende. Liest die vorhandene HA-Historie; der Akkustand wird nicht mit Leistung vermischt. |
 | `history_hours` (1–48, Standard 6) | Zeitraum des Diagramms |
 | `smoothing_minutes` (0–60, Standard 0) | Zeitgewichtete Glättung nur für die Diagrammanzeige; `0` zeigt die Rohkurve. Sensorwerte, Recorder und Anomalieerkennung bleiben unverändert. |
+| `history_colors` | Kurven und Legende verwenden je Messreihe dieselbe Farbe. Unter **Kurvenfarben** lässt sich jede Standardfarbe ändern und wiederherstellen. In YAML z. B. `history_colors: { 'solar_power:sensor.solar_dach': '#D28522' }`. |
 
 Keine Verbrauchsbilanz, Tagesaggregation, Sparprognose oder Steuerung.
 
@@ -282,7 +283,7 @@ Version installieren und Home Assistant danach neu starten.
 
 ## Versionen
 
-Diese Integration ist ein Prototyp in Version **0.9.7**. Sie wird unabhängig von
+Diese Integration ist ein Prototyp in Version **0.9.8**. Sie wird unabhängig von
 der Website powermesh.de versioniert und benötigt keinen Dienst.
 
 ## Lokale Tests
@@ -296,7 +297,7 @@ pwsh -NoProfile -File ./build-package.ps1 -DryRun
 pwsh -NoProfile -File ./build-package.ps1 -BuildPackage
 ```
 
-Das Archiv `dist/powermesh-energy-homeassistant-0.9.7.zip` enthält
+Das Archiv `dist/powermesh-energy-homeassistant-0.9.8.zip` enthält
 `custom_components/powermesh_energy` und die Lizenz, keine Testumgebung, Caches
 oder Zugangsdaten. Vorhandene Archive werden nicht überschrieben.
 Den enthaltenen Komponentenordner in das Konfigurationsverzeichnis von
