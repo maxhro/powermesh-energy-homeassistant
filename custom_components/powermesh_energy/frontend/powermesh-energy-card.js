@@ -29,6 +29,52 @@ export function configuredEnergyRoles(config, configured) {
   return roles.filter(([role]) => roleEntities(config, configured, role).length > 0);
 }
 
+const HISTORY_EXTRA_COLORS = ["#8856a7", "#077da8", "#d05b26", "#9f4679", "#697916", "#5348ad", "#9c5035", "#1c847e", "#ad4771", "#68717e"];
+const HISTORY_HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+function extraHistoryColor(index) {
+  if (index < HISTORY_EXTRA_COLORS.length) return HISTORY_EXTRA_COLORS[index];
+  const hue = (index * 137.508) % 360;
+  return `#${[0, 8, 4].map((offset) => {
+    const channel = (offset + hue / 30) % 12;
+    return Math.round(255 * (0.46 - 0.28 * Math.max(-1, Math.min(channel - 3, 9 - channel, 1)))).toString(16).padStart(2, "0");
+  }).join("")}`;
+}
+
+export function energyHistorySources(config, states) {
+  const configured = states[config.entity]?.attributes?.roles || {};
+  const sources = [];
+  const add = (role, label, baseColor, entity, signedDirection) => {
+    const name = states[entity]?.attributes?.friendly_name || entity;
+    sources.push({ role, label: `${label}: ${name}`, baseColor, entity, signedDirection, key: `${role}:${entity}` });
+  };
+  for (const [role, label, , color] of roles) {
+    if (role === "battery_soc" || config.grid_power_entity && ["grid_import_power", "grid_export_power"].includes(role)) continue;
+    for (const entity of roleEntities(config, configured, role)) add(role, label, color, entity);
+  }
+  if (config.grid_power_entity) {
+    const negativeIsExport = config.grid_negative_is_export ?? true;
+    add("grid_import_power", "Netzbezug", "#22766d", config.grid_power_entity, negativeIsExport ? "positive" : "negative");
+    add("grid_export_power", "Einspeisung", "#b34f55", config.grid_power_entity, negativeIsExport ? "negative" : "positive");
+  }
+  if (config.battery_power_entity) {
+    const negativeIsDischarge = config.battery_negative_is_discharge ?? true;
+    add("battery_charge_power", "Laden", "#427a3b", config.battery_power_entity, negativeIsDischarge ? "positive" : "negative");
+    add("battery_discharge_power", "Entladen", "#8b5462", config.battery_power_entity, negativeIsDischarge ? "negative" : "positive");
+  }
+  const reserved = new Set(sources.map(({ baseColor }) => baseColor));
+  const used = new Set();
+  let extra = 0;
+  return sources.map(({ baseColor, ...source }) => {
+    let defaultColor = baseColor;
+    if (used.has(defaultColor)) {
+      do { defaultColor = extraHistoryColor(extra++); } while (used.has(defaultColor) || reserved.has(defaultColor));
+    }
+    used.add(defaultColor);
+    return { ...source, defaultColor, color: config.history_colors?.[source.key] ?? defaultColor };
+  });
+}
+
 export function sourceValue(state, role, now, staleMinutes = 15) {
   if (!state || ["unknown", "unavailable"].includes(state.state)) {
     return { value: null, status: "Nicht verfügbar" };
@@ -123,6 +169,23 @@ export function averagedSourceValue(states, role, now, staleMinutes = 15) {
   };
 }
 
+const HISTORY_CHART_WIDTH = 360;
+const HISTORY_CHART_HEIGHT = 156;
+const HISTORY_CHART_STYLES = `
+  .history-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 8px; }
+  .history-heading h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .history-caption, .history-empty { color: var(--secondary-text-color); font-size: 12px; }
+  .energy-chart { display: block; width: 100%; height: 156px; overflow: visible; }
+  .energy-grid { stroke: var(--divider-color); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .energy-axis { fill: var(--secondary-text-color); font-size: 10px; }
+  .energy-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+  .history-band { fill: var(--history-band-color); }
+  .history-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 4px; }
+  .history-legend-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; color: var(--secondary-text-color); font-size: 12px; }
+  .history-legend-swatch { width: 12px; height: 3px; flex: none; }
+  @media (max-width: 480px) { .energy-chart { height: 140px; } }
+`;
+
 export class PowermeshEnergyCard extends HTMLElement {
   constructor() {
     super();
@@ -151,17 +214,8 @@ export class PowermeshEnergyCard extends HTMLElement {
         .status { display: block; color: var(--secondary-text-color); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
         .stale .status { color: var(--warning-color, #b57912); }
         .history-section { border-top: 1px solid var(--divider-color); padding: 8px 20px 16px; }
-        .history-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 8px; }
-        .history-heading h3 { margin: 0; font-size: 14px; font-weight: 600; }
-        .history-caption, .history-empty { color: var(--secondary-text-color); font-size: 12px; }
-        .energy-chart { display: block; width: 100%; height: 156px; overflow: visible; }
-        .energy-grid { stroke: var(--divider-color); stroke-width: 1; vector-effect: non-scaling-stroke; }
-        .energy-axis { fill: var(--secondary-text-color); font-size: 10px; }
-        .energy-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-        .history-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 4px; }
-        .history-legend-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--secondary-text-color); font-size: 12px; }
-        .history-legend-swatch { width: 12px; height: 3px; flex: none; }
-        @media (max-width: 480px) { .history-section { padding-inline: 12px; } .energy-chart { height: 140px; } }
+        ${HISTORY_CHART_STYLES}
+        @media (max-width: 480px) { .history-section { padding-inline: 12px; } }
         @media (prefers-reduced-motion: no-preference) { .metric { transition: background-color 120ms; } }
       </style>
       <ha-card><header><ha-icon icon="mdi:home-lightning-bolt-outline"></ha-icon><h2></h2><span class="local">Lokal</span></header><div class="values"></div><div class="history"></div></ha-card>`;
@@ -199,6 +253,10 @@ export class PowermeshEnergyCard extends HTMLElement {
     if (config.smoothing_minutes != null && (!Number.isInteger(config.smoothing_minutes) || config.smoothing_minutes < 0 || config.smoothing_minutes > 60)) {
       throw new Error("Glättung: 0 bis 60 Minuten");
     }
+    if (config.history_colors != null && (typeof config.history_colors !== "object" || Array.isArray(config.history_colors)
+      || Object.values(config.history_colors).some((color) => typeof color !== "string" || !HISTORY_HEX_COLOR.test(color)))) {
+      throw new Error("Kurvenfarben: Bitte Hex-Farben im Format #RRGGBB verwenden");
+    }
     this._config = { show_history: false, history_hours: 6, smoothing_minutes: 0, ...config };
     this.render();
   }
@@ -215,13 +273,13 @@ export class PowermeshEnergyCard extends HTMLElement {
 
   async _loadPowerHistory(sources) {
     const hours = this._config.history_hours;
-    const key = `${hours}|${sources.map((item) => item.entity).sort().join(",")}`;
+    const entityIds = [...new Set(sources.map((item) => item.entity))].sort();
+    const key = `${hours}|${entityIds.join(",")}`;
     if (this._historyLoading || (this._historyKey === key && Date.now() - this._historyAt < HISTORY_REFRESH_MS)) return;
     this._historyLoading = true;
     const end = Date.now();
     const start = end - hours * 3600000;
     try {
-      const entityIds = [...new Set(sources.map((item) => item.entity))];
       const result = await this._hass.callWS({
         type: "history/history_during_period", start_time: new Date(start).toISOString(), end_time: new Date(end).toISOString(),
         entity_ids: entityIds, minimal_response: true, no_attributes: true, significant_changes_only: false,
@@ -239,12 +297,8 @@ export class PowermeshEnergyCard extends HTMLElement {
 
   _renderPowerHistory(sources, language) {
     const section = el("section", "history-section");
-    const heading = el("div", "history-heading");
-    heading.append(el("h3", null, "Leistungsverlauf"));
     const smoothing = this._config.smoothing_minutes;
-    const caption = `Letzte ${this._config.history_hours} h${smoothing ? ` · geglättet ${smoothing} min` : ""}`;
-    heading.append(el("span", "history-caption", caption));
-    section.append(heading);
+    section.append(historyHeading("Leistungsverlauf", this._config));
     if (!sources.length) {
       section.append(el("div", "history-empty", "Keine Leistungssensoren ausgewählt."));
       return section;
@@ -272,34 +326,12 @@ export class PowermeshEnergyCard extends HTMLElement {
       });
       return { ...source, unit, points };
     });
-    const geometry = powerHistoryGeometry(series, this._powerHistory.start, this._powerHistory.end, 360, 156, smoothing * 60, language);
+    const geometry = powerHistoryGeometry(series, this._powerHistory.start, this._powerHistory.end, HISTORY_CHART_WIDTH, HISTORY_CHART_HEIGHT, smoothing * 60, language);
     if (!geometry) {
       section.append(el("div", "history-empty", "Keine Werte im gewählten Zeitraum."));
       return section;
     }
-    const chart = svg("svg", { class: "energy-chart", viewBox: "0 0 360 156", preserveAspectRatio: "none", role: "img", "aria-label": `Leistungsverlauf der letzten ${this._config.history_hours} Stunden` });
-    geometry.grid.forEach((line) => {
-      chart.append(svg("line", { class: "energy-grid", x1: geometry.left, x2: geometry.right, y1: line.y, y2: line.y }));
-      const label = svg("text", { class: "energy-axis", x: geometry.left - 5, y: line.y + 3, "text-anchor": "end" });
-      label.textContent = `${line.label} ${line.unit}`;
-      chart.append(label);
-    });
-    geometry.ticks.forEach((tick) => {
-      chart.append(svg("line", { class: "energy-grid", x1: tick.x, x2: tick.x, y1: geometry.top, y2: geometry.bottom, opacity: 0.45 }));
-      const label = svg("text", { class: "energy-axis", x: tick.x, y: 151, "text-anchor": tick.x === geometry.left ? "start" : tick.x === geometry.right ? "end" : "middle" });
-      label.textContent = tick.label;
-      chart.append(label);
-    });
-    geometry.lines.forEach((line) => chart.append(svg("path", { class: "energy-line", d: line.path, stroke: line.color })));
-    const legend = el("div", "history-legend");
-    geometry.lines.forEach((line) => {
-      const item = el("span", "history-legend-item");
-      const swatch = el("span", "history-legend-swatch");
-      swatch.style.backgroundColor = line.color;
-      item.append(swatch, document.createTextNode(line.label));
-      legend.append(item);
-    });
-    section.append(chart, legend);
+    section.append(...renderHistoryChart(geometry, `Leistungsverlauf der letzten ${this._config.history_hours} Stunden`));
     return section;
   }
 
@@ -312,30 +344,9 @@ export class PowermeshEnergyCard extends HTMLElement {
     this.shadowRoot.querySelector("h2").textContent = this._config.title || "Powermesh Energie";
     const configured = this._hass.states[this._config.entity]?.attributes?.roles || {};
     const combinedGrid = Boolean(this._config.grid_power_entity);
-    const sources = roles.filter(([role]) => role !== "battery_soc" && !(combinedGrid && ["grid_import_power", "grid_export_power"].includes(role))).flatMap(([role, label, , color]) =>
-      roleEntities(this._config, configured, role).map((entity) => {
-        const state = this._hass.states[entity];
-        return { role, label: `${label}: ${state?.attributes?.friendly_name || entity}`, color, entity };
-      }),
-    ).filter((source) => this._hass.states[source.entity]);
-    if (combinedGrid && this._hass.states[this._config.grid_power_entity]) {
-      const entity = this._config.grid_power_entity;
-      const name = this._hass.states[entity].attributes?.friendly_name || entity;
-      const negativeIsExport = this._config.grid_negative_is_export ?? true;
-      sources.push(
-        { role: "grid_import_power", label: `Netzbezug: ${name}`, color: "#22766d", entity, signedDirection: negativeIsExport ? "positive" : "negative" },
-        { role: "grid_export_power", label: `Einspeisung: ${name}`, color: "#b34f55", entity, signedDirection: negativeIsExport ? "negative" : "positive" },
-      );
-    }
-    if (this._config.battery_power_entity && this._hass.states[this._config.battery_power_entity]) {
-      const entity = this._config.battery_power_entity;
-      const name = this._hass.states[entity].attributes?.friendly_name || entity;
-      const negativeIsDischarge = this._config.battery_negative_is_discharge ?? true;
-      sources.push(
-        { role: "battery_charge_power", label: `Laden: ${name}`, color: "#427a3b", entity, signedDirection: negativeIsDischarge ? "positive" : "negative" },
-        { role: "battery_discharge_power", label: `Entladen: ${name}`, color: "#5974a5", entity, signedDirection: negativeIsDischarge ? "negative" : "positive" },
-      );
-    }
+    const sources = this._config.show_history
+      ? energyHistorySources(this._config, this._hass.states).filter(({ entity }) => this._hass.states[entity])
+      : [];
     if (this._config.show_history && sources.length) this._loadPowerHistory(sources);
     const children = configuredEnergyRoles(this._config, configured)
       .filter(([role]) => !(combinedGrid && ["grid_import_power", "grid_export_power"].includes(role)))
@@ -446,7 +457,7 @@ export class PowermeshEnergyCard extends HTMLElement {
   }
 }
 
-class PowermeshEnergyCardEditor extends HTMLElement {
+export class PowermeshEnergyCardEditor extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
@@ -494,9 +505,24 @@ class PowermeshEnergyCardEditor extends HTMLElement {
     this._form.addEventListener("value-changed", (event) => {
       event.stopPropagation();
       this._config = { ...this._config, ...event.detail.value };
-      this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
+      this._renderHistoryColors();
+      this._emitConfig();
     });
-    this.shadowRoot.append(this._form);
+    this._colorFields = el("fieldset");
+    this._colorFields.hidden = true;
+    this._colorRows = el("div");
+    this._colorFields.append(el("legend", null, "Kurvenfarben"), this._colorRows);
+    const style = el("style", null, `
+      fieldset { margin: 16px 0 0; min-width: 0; border: 1px solid var(--divider-color); border-radius: 6px; }
+      .color-row { display: grid; grid-template-columns: minmax(0, 1fr) 44px 36px; align-items: center; gap: 8px; min-height: 44px; }
+      label { overflow-wrap: anywhere; cursor: pointer; }
+      input { width: 44px; height: 36px; padding: 2px; box-sizing: border-box; cursor: pointer; }
+      button { display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 4px; background: transparent; color: var(--primary-text-color); cursor: pointer; }
+      button:not(:disabled):hover { background: var(--secondary-background-color); }
+      button:disabled { opacity: 0.35; cursor: default; }
+      button:focus-visible, input:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+    `);
+    this.shadowRoot.append(style, this._form, this._colorFields);
   }
   setConfig(config) {
     const rolesConfig = Object.fromEntries(roles.flatMap(([role]) => {
@@ -505,8 +531,64 @@ class PowermeshEnergyCardEditor extends HTMLElement {
     }));
     this._config = { show_header: true, show_history: false, history_hours: 6, smoothing_minutes: 0, sum_by_area: false, average_battery_soc: false, grid_negative_is_export: true, battery_negative_is_discharge: true, ...config, ...rolesConfig };
     this._form.data = this._config;
+    this._renderHistoryColors();
   }
-  set hass(hass) { this._form.hass = hass; }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._form.hass = hass;
+    this._renderHistoryColors();
+  }
+
+  _emitConfig() {
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
+  }
+
+  _setHistoryColor(key, color) {
+    const colors = { ...this._config.history_colors };
+    if (color == null) delete colors[key];
+    else colors[key] = color;
+    const { history_colors, ...config } = this._config;
+    this._config = Object.keys(colors).length ? { ...config, history_colors: colors } : config;
+    this._form.data = this._config;
+    this._renderHistoryColors();
+    this._emitConfig();
+  }
+
+  _renderHistoryColors() {
+    const sources = this._config?.show_history ? energyHistorySources(this._config, this._hass?.states || {}) : [];
+    this._colorFields.hidden = !sources.length;
+    const signature = JSON.stringify(sources.map(({ key, label }) => [key, label]));
+    if (this._colorRowsSignature !== signature) {
+      this._colorRowsSignature = signature;
+      this._colorInputs = sources.map(({ key, label }, index) => {
+        const row = el("div", "color-row");
+        const input = el("input");
+        input.type = "color";
+        input.id = `history-color-${index}`;
+        input.addEventListener("change", () => this._setHistoryColor(key, input.value));
+        const fieldLabel = el("label", null, label);
+        fieldLabel.htmlFor = input.id;
+        const reset = el("button");
+        reset.type = "button";
+        reset.title = "Standardfarbe wiederherstellen";
+        reset.setAttribute("aria-label", `${reset.title}: ${label}`);
+        const icon = el("ha-icon");
+        icon.setAttribute("icon", "mdi:restore");
+        reset.append(icon);
+        reset.addEventListener("click", () => { input.focus(); this._setHistoryColor(key, null); });
+        row.append(fieldLabel, input, reset);
+        return { row, input, reset };
+      });
+      this._colorRows.replaceChildren(...this._colorInputs.map(({ row }) => row));
+    }
+    sources.forEach(({ key, color, defaultColor }, index) => {
+      const { input, reset } = this._colorInputs[index];
+      const value = typeof color === "string" && HISTORY_HEX_COLOR.test(color) ? color.toLowerCase() : defaultColor;
+      if (input.value !== value) input.value = value;
+      reset.disabled = !Object.hasOwn(this._config.history_colors || {}, key);
+    });
+  }
 }
 
 if (!customElements.get("powermesh-energy-card")) customElements.define("powermesh-energy-card", PowermeshEnergyCard);
@@ -573,46 +655,68 @@ export function smoothHistory(points, windowSeconds) {
 }
 
 export function powerHistoryGeometry(series, start, end, width, height, smoothingSeconds = 0, language) {
+  const watts = series.filter(({ unit }) => unit === "W" || unit === "kW").map((item) => ({
+    ...item, points: item.points.map(([time, value]) => [time, value >= 0 ? value * (item.unit === "kW" ? 1000 : 1) : NaN]),
+  }));
+  return historyGeometry(watts, start, end, width, height, smoothingSeconds, language, { power: true });
+}
+
+export function historyGeometry(series, start, end, width, height, smoothingSeconds = 0, language, { power = false, band } = {}) {
   if (!(end > start) || !series.length) return null;
-  const left = 42;
   const right = width - 8;
   const top = 8;
   const bottom = height - 24;
-  const plotWidth = right - left;
   const plotHeight = bottom - top;
   const normalized = series.map((item) => {
-    const factor = item.unit === "kW" ? 1000 : item.unit === "W" ? 1 : NaN;
-    const points = item.points.filter(([time]) => time <= end)
-      .map(([time, value]) => [time, Number.isFinite(value) && value >= 0 ? value * factor : NaN]);
-    const smoothed = smoothHistory(points, smoothingSeconds);
+    const smoothed = smoothHistory(item.points.filter(([time]) => time <= end), smoothingSeconds);
     const visible = smoothed.filter(([time]) => time >= start);
     const previous = smoothed.findLast(([time]) => time < start);
     if (previous && (!visible.length || visible[0][0] > start)) visible.unshift([start, previous[1]]);
     return { ...item, points: visible };
   }).filter((item) => item.points.some(([, value]) => Number.isFinite(value)));
   if (!normalized.length) return null;
-  const values = normalized.flatMap((item) => item.points.map(([, value]) => value).filter(Number.isFinite));
-  const rawMax = values.reduce((maximum, value) => Math.max(maximum, value), 0);
-  const roughStep = (rawMax || 1) / 4;
-  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
-  const fraction = roughStep / magnitude;
-  const step = (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10) * magnitude;
-  const maxValue = Math.max(step, Math.ceil(rawMax / step) * step);
-  const x = (time) => round1(left + Math.min(1, Math.max(0, (time - start) / (end - start))) * plotWidth);
-  const y = (value) => round1(bottom - Math.min(1, Math.max(0, value / maxValue)) * plotHeight);
-  const grid = Array.from({ length: 5 }, (_, index) => {
-    const value = maxValue * (4 - index) / 4;
-    return { y: round1(top + plotHeight * index / 4), label: new Intl.NumberFormat("de", { maximumFractionDigits: 1 }).format(value >= 1000 ? value / 1000 : value), unit: value >= 1000 ? "kW" : "W" };
+  const hasBand = band?.every(Number.isFinite) && band[1] >= band[0];
+  let minValue = power ? 0 : hasBand ? band[0] : Infinity;
+  let maxValue = power ? 0 : hasBand ? band[1] : -Infinity;
+  for (const item of normalized) {
+    for (const [, value] of item.points) {
+      if (!Number.isFinite(value)) continue;
+      minValue = Math.min(minValue, value);
+      maxValue = Math.max(maxValue, value);
+    }
+  }
+  if (power) {
+    const roughStep = (maxValue || 1) / 4;
+    const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+    const fraction = roughStep / magnitude;
+    const step = (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10) * magnitude;
+    maxValue = Math.max(step, Math.ceil(maxValue / step) * step);
+  } else {
+    const pad = (maxValue - minValue) * 0.05 || Math.max(Math.abs(minValue) * 0.01, 1e-6);
+    minValue -= pad;
+    maxValue += pad;
+  }
+  const span = maxValue - minValue;
+  const formatValue = new Intl.NumberFormat(language, {
+    maximumFractionDigits: power ? 1 : Math.max(0, Math.min(20, 1 - Math.floor(Math.log10(span / 4)))),
   });
+  const grid = Array.from({ length: 5 }, (_, index) => {
+    const value = minValue + span * (4 - index) / 4;
+    const kilowatts = power && value >= 1000;
+    return { y: round1(top + plotHeight * index / 4), label: formatValue.format(kilowatts ? value / 1000 : value), unit: power ? kilowatts ? "kW" : "W" : normalized[0].unit };
+  });
+  const left = Math.max(42, Math.min(width / 3, Math.max(...grid.map(({ label, unit }) => `${label} ${unit || ""}`.length)) * 6 + 8));
+  const plotWidth = right - left;
+  const x = (time) => round1(left + Math.min(1, Math.max(0, (time - start) / (end - start))) * plotWidth);
+  const y = (value) => round1(bottom - Math.min(1, Math.max(0, (value - minValue) / span)) * plotHeight);
   const ticks = [0, 0.5, 1].map((fraction) => {
     const time = start + (end - start) * fraction;
     return { x: round1(left + plotWidth * fraction), label: new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit" }).format(time * 1000) };
   });
   const lines = normalized.map((item) => {
-    const points = item.points.filter(([time]) => time >= start && time <= end);
     const path = [];
     let open = false;
-    for (const [time, value] of points) {
+    for (const [time, value] of item.points) {
       if (!Number.isFinite(value)) {
         if (open) path.push(`H${x(time)}`);
         open = false;
@@ -626,38 +730,48 @@ export function powerHistoryGeometry(series, start, end, width, height, smoothin
     if (open) path.push(`H${right}`);
     return { role: item.role, label: item.label, color: item.color, path: path.join(" ") };
   }).filter((item) => item.path);
-  return lines.length ? { left, right, top, bottom, grid, ticks, lines, maxValue } : null;
+  return { left, right, top, bottom, grid, ticks, lines, maxValue, bandTop: hasBand ? y(band[1]) : null, bandBottom: hasBand ? y(band[0]) : null };
 }
 
-/** Step-line SVG path (values hold until the next change) with optional normal-range band; NaN values are gaps. */
-export function sparklinePath(points, start, end, width, height, low, high) {
-  const finite = points.filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v));
-  if (!finite.length || !(end > start)) return null;
-  const band = Number.isFinite(low) && Number.isFinite(high) && high >= low;
-  let min = Math.min(...finite.map(([, v]) => v), ...(band ? [low] : []));
-  let max = Math.max(...finite.map(([, v]) => v), ...(band ? [high] : []));
-  if (max === min) { max += 1; min -= 1; }
-  const pad = (max - min) * 0.05;
-  min -= pad;
-  max += pad;
-  const x = (t) => round1(Math.min(1, Math.max(0, (t - start) / (end - start))) * width);
-  const y = (v) => round1((1 - (v - min) / (max - min)) * height);
-  const parts = [];
-  let open = false;
-  for (const [t, v] of points) {
-    if (!Number.isFinite(t)) continue;
-    if (!Number.isFinite(v)) {
-      if (open) parts.push(`H${x(t)}`);
-      open = false;
-    } else if (!open) {
-      parts.push(`M${x(t)} ${y(v)}`);
-      open = true;
-    } else {
-      parts.push(`H${x(t)} V${y(v)}`);
-    }
+function historyHeading(title, config) {
+  const heading = el("div", "history-heading");
+  const smoothing = config.smoothing_minutes;
+  const caption = `Letzte ${config.history_hours} h${smoothing ? ` · geglättet ${smoothing} min` : ""}`;
+  heading.append(el("h3", null, title), el("span", "history-caption", caption));
+  return heading;
+}
+
+function renderHistoryChart(geometry, description) {
+  const chart = svg("svg", { class: "energy-chart", viewBox: `0 0 ${HISTORY_CHART_WIDTH} ${HISTORY_CHART_HEIGHT}`, preserveAspectRatio: "none", role: "img", "aria-label": description });
+  const legend = el("div", "history-legend");
+  const addLegendItem = (label, color) => {
+    const item = el("span", "history-legend-item");
+    const swatch = el("span", "history-legend-swatch");
+    swatch.style.backgroundColor = color;
+    item.append(swatch, el("span", null, label));
+    legend.append(item);
+  };
+  if (geometry.bandTop != null) {
+    chart.append(svg("rect", { class: "history-band", x: geometry.left, y: geometry.bandTop, width: geometry.right - geometry.left, height: Math.max(0.5, geometry.bandBottom - geometry.bandTop) }));
   }
-  if (open) parts.push(`H${x(end)}`);
-  return { path: parts.join(" "), bandTop: band ? y(high) : null, bandBottom: band ? y(low) : null };
+  geometry.grid.forEach((line) => {
+    chart.append(svg("line", { class: "energy-grid", x1: geometry.left, x2: geometry.right, y1: line.y, y2: line.y }));
+    const label = svg("text", { class: "energy-axis", x: geometry.left - 5, y: line.y + 3, "text-anchor": "end" });
+    label.textContent = line.unit ? `${line.label} ${line.unit}` : line.label;
+    chart.append(label);
+  });
+  geometry.ticks.forEach((tick) => {
+    chart.append(svg("line", { class: "energy-grid", x1: tick.x, x2: tick.x, y1: geometry.top, y2: geometry.bottom, opacity: 0.45 }));
+    const label = svg("text", { class: "energy-axis", x: tick.x, y: HISTORY_CHART_HEIGHT - 5, "text-anchor": tick.x === geometry.left ? "start" : tick.x === geometry.right ? "end" : "middle" });
+    label.textContent = tick.label;
+    chart.append(label);
+  });
+  geometry.lines.forEach((line) => {
+    chart.append(svg("path", { class: "energy-line", d: line.path, stroke: line.color }));
+    addLegendItem(line.label, line.color);
+  });
+  if (geometry.bandTop != null) addLegendItem("Normalbereich", "var(--history-band-color)");
+  return [chart, legend];
 }
 
 /** Horizontal timeline segments in percent of the window; open findings last until `end`. */
@@ -704,8 +818,6 @@ function svg(tag, attributes = {}) {
 
 const ANOMALY_DEFAULTS = { show_header: true, show_monitors: true, show_recent: true, show_history: false, history_hours: 6, smoothing_minutes: 5, show_learning_bar: false, show_timeline: false, timeline_days: 7 };
 const HISTORY_REFRESH_MS = 300000;
-const SPARK_WIDTH = 300;
-const SPARK_HEIGHT = 48;
 
 function formatTime(iso, language) {
   const stamp = Date.parse(iso);
@@ -720,40 +832,6 @@ export class PowermeshAnomalyCard extends HTMLElement {
       <style>
         :host { display: block; }
         ha-card { overflow: hidden; }
-        header { display: flex; align-items: center; gap: 12px; padding: 20px 20px 8px; }
-        header ha-icon { color: var(--primary-color); flex: none; }
-        h2 { flex: 1; min-width: 0; margin: 0; font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
-        .count { font-size: 12px; padding: 2px 8px; border-radius: 12px; background: var(--secondary-background-color); }
-        .count.alert { background: var(--error-color, #b34f55); color: var(--text-primary-color, #fff); }
-        section { padding: 4px 16px 12px; }
-        h3 { margin: 8px 0 4px; font-size: 14px; font-weight: 600; color: var(--secondary-text-color); }
-        .finding, .monitor { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 4px; border-top: 1px solid var(--divider-color); }
-        .name { font-weight: 500; overflow-wrap: anywhere; }
-        .meta { grid-column: 1 / -1; color: var(--secondary-text-color); font-size: 12px; overflow-wrap: anywhere; }
-        .badge { font-size: 12px; align-self: start; color: var(--badge-color); }
-        button { font: inherit; font-size: 13px; border-radius: 4px; border: 1px solid var(--primary-color); color: var(--primary-color); background: transparent; padding: 4px 10px; cursor: pointer; align-self: start; }
-        button:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
-        .gauge { grid-column: 1 / -1; height: 14px; position: relative; border-radius: 7px; background: var(--secondary-background-color); }
-        .band { position: absolute; top: 0; bottom: 0; border-radius: 7px; background: color-mix(in srgb, var(--success-color, #427a3b) 35%, transparent); }
-        .marker { position: absolute; top: -2px; bottom: -2px; width: 3px; margin-left: -1px; border-radius: 2px; background: var(--primary-text-color); }
-        .marker.outside { background: var(--error-color, #b34f55); }
-        .empty { color: var(--secondary-text-color); font-size: 14px; padding: 8px 4px; }
-        details summary { cursor: pointer; color: var(--secondary-text-color); font-size: 14px; padding: 8px 4px; }
-        .progress { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--secondary-background-color); overflow: hidden; }
-        .progress > div { height: 100%; background: var(--info-color, #22766d); }
-        .spark { grid-column: 1 / -1; display: block; width: 100%; height: 48px; }
-        .spark .spark-band { fill: color-mix(in srgb, var(--success-color, #427a3b) 22%, transparent); }
-        .spark .spark-line { fill: none; stroke: var(--primary-color); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-        .spark-note { grid-column: 1 / -1; color: var(--secondary-text-color); font-size: 11px; }
-        .timeline { position: relative; height: 18px; margin: 4px 4px 2px; border-radius: 4px; background: var(--secondary-background-color); }
-        .timeline span { position: absolute; top: 3px; bottom: 3px; border-radius: 3px; background: var(--error-color, #b34f55); }
-        .timeline span.data_quality { background: var(--warning-color, #b57912); }
-        .timeline span.done { opacity: 0.55; }
-        .timeline-axis { display: flex; justify-content: space-between; color: var(--secondary-text-color); font-size: 11px; padding: 0 4px 4px; }
-        .legend { display: flex; flex-wrap: wrap; gap: 12px; color: var(--secondary-text-color); font-size: 11px; padding: 0 4px; }
-        .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; background: var(--error-color, #b34f55); }
-        .legend i.data_quality { background: var(--warning-color, #b57912); }
-      </style>
         header { display: flex; align-items: center; gap: 12px; padding: 20px 20px 8px; }
         ha-card.no-header header { display: none; }
         ha-card.no-header .body { padding-top: 12px; }
@@ -777,10 +855,8 @@ export class PowermeshAnomalyCard extends HTMLElement {
         details summary { cursor: pointer; color: var(--secondary-text-color); font-size: 14px; padding: 8px 4px; }
         .progress { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--secondary-background-color); overflow: hidden; }
         .progress > div { height: 100%; background: var(--info-color, #22766d); }
-        .spark { grid-column: 1 / -1; display: block; width: 100%; height: 48px; }
-        .spark .spark-band { fill: color-mix(in srgb, var(--success-color, #427a3b) 22%, transparent); }
-        .spark .spark-line { fill: none; stroke: var(--primary-color); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-        .spark-note { grid-column: 1 / -1; color: var(--secondary-text-color); font-size: 11px; }
+        .monitor-history { grid-column: 1 / -1; min-width: 0; margin-top: 8px; --history-band-color: color-mix(in srgb, var(--success-color, #427a3b) 30%, transparent); }
+        ${HISTORY_CHART_STYLES}
         .timeline { position: relative; height: 18px; margin: 4px 4px 2px; border-radius: 4px; background: var(--secondary-background-color); }
         .timeline span { position: absolute; top: 3px; bottom: 3px; border-radius: 3px; background: var(--error-color, #b34f55); }
         .timeline span.data_quality { background: var(--warning-color, #b57912); }
@@ -862,23 +938,25 @@ export class PowermeshAnomalyCard extends HTMLElement {
     }
   }
 
-  _sparkline(monitor) {
+  _renderMonitorHistory(monitor, language) {
+    const container = el("div", "monitor-history");
+    container.append(historyHeading("Verlauf", this._config));
+    const message = (text) => {
+      container.append(el("div", "history-empty", text));
+      return container;
+    };
     const history = this._history;
     if (!history || this._historyKey?.split("|")[1]?.split(",").includes(monitor.entity_id) !== true) {
-      return el("span", "spark-note", "Verlauf wird geladen …");
+      return message("Verlauf wird geladen …");
     }
-    if (history.error) return el("span", "spark-note", "Verlauf nicht verfügbar.");
-    const points = smoothHistory(history.series[monitor.entity_id] || [], (this._config.smoothing_minutes ?? 0) * 60);
-    const geometry = sparklinePath(points, history.start, history.end, SPARK_WIDTH, SPARK_HEIGHT,
-      monitor.kind === "baseline" ? monitor.band_low : NaN, monitor.kind === "baseline" ? monitor.band_high : NaN);
-    if (!geometry) return el("span", "spark-note", "Keine Werte im Zeitraum.");
-    const chart = svg("svg", { class: "spark", viewBox: `0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`, preserveAspectRatio: "none", role: "img",
-      "aria-label": `Verlauf der letzten ${this._config.history_hours} Stunden${this._config.smoothing_minutes ? `, geglättet ${this._config.smoothing_minutes} min` : ""}${geometry.bandTop != null ? " mit Normalbereich" : ""}` });
-    if (geometry.bandTop != null) {
-      chart.append(svg("rect", { class: "spark-band", x: 0, y: geometry.bandTop, width: SPARK_WIDTH, height: Math.max(0.5, geometry.bandBottom - geometry.bandTop) }));
-    }
-    chart.append(svg("path", { class: "spark-line", d: geometry.path }));
-    return chart;
+    if (history.error) return message("Verlauf nicht verfügbar.");
+    const label = monitor.name || monitor.entity_id;
+    const series = [{ label, unit: monitor.unit, color: "var(--primary-color)", points: history.series[monitor.entity_id] || [] }];
+    const band = monitor.kind === "baseline" ? [monitor.band_low, monitor.band_high] : undefined;
+    const geometry = historyGeometry(series, history.start, history.end, HISTORY_CHART_WIDTH, HISTORY_CHART_HEIGHT, this._config.smoothing_minutes * 60, language, { band });
+    if (!geometry) return message("Keine Werte im Zeitraum.");
+    container.append(...renderHistoryChart(geometry, `Verlauf: ${label}${geometry.bandTop != null ? " mit Normalbereich" : ""}`));
+    return container;
   }
 
   _timeline(findings, language) {
@@ -972,7 +1050,7 @@ export class PowermeshAnomalyCard extends HTMLElement {
       }
       row.append(gauge);
     }
-    if (this._config.show_history) row.append(this._sparkline(monitor));
+    if (this._config.show_history) row.append(this._renderMonitorHistory(monitor, language));
     return row;
   }
 

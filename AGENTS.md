@@ -2,7 +2,7 @@
 
 ## Current baseline
 
-- Version `0.9.7` prototype: local anomaly monitoring (`monitor.py`,
+- Version `0.9.8` prototype: local anomaly monitoring (`monitor.py`,
   `monitor_flow.py`), local energy overview and the multi-style Powermesh Zähler
   meter card (`powermesh-meter-card`). Owner-confirmed sensors (max 50) suggested
   from areas, labels and devices: learned EWMA normal range for
@@ -10,8 +10,9 @@
   energy, no-data checks, acknowledge service, persistent/notify-entity messages,
   findings sensor, problem binary sensor and `powermesh-anomaly-card`. The local
   energy overview supports multiple sources per area, optional power sums,
-  battery percentage averages and combined signed grid/battery power. Anomaly-history
-  charts use display-only time-weighted smoothing. The meter card visualizes
+  battery percentage averages and combined signed grid/battery power. Both history
+  charts share time/value axes and display-only time-weighted smoothing. Energy
+  curves have distinct, configurable colors. The meter card visualizes
   meter readings in six styles (retro Ferraris with spinning disc, EBZ, EMH,
   modern, nixie, and 80s VFD). Ferraris uses an aluminium faceplate and a
   perspective-rendered disc; without an explicit power entity, speed is estimated

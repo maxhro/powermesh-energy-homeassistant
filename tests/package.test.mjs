@@ -15,8 +15,8 @@ function fixture(t) {
   t.after(() => rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   copyFileSync(join(root, 'build-package.ps1'), join(work, 'build-package.ps1'));
   for (const [name, content] of Object.entries({
-    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.7"}',
-    [`${component}/const.py`]: 'VERSION: Final = "0.9.7"\n',
+    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.8"}',
+    [`${component}/const.py`]: 'VERSION: Final = "0.9.8"\n',
     [`${component}/__init__.py`]: '',
     [`${component}/translations/de.json`]: '{}',
     [`${component}/frontend/powermesh-energy-card.js`]: 'export const synthetic = true;',
@@ -60,7 +60,7 @@ test('manual-install ZIP includes exactly component sources and license without 
   assert.equal(existsSync(join(work, 'dist')), false);
   const built = run(work, '-BuildPackage');
   assert.equal(built.status, 0, built.stderr);
-  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.7.zip');
+  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.8.zip');
   assert.deepEqual(zipNames(path), [
     `${component}/__init__.py`, `${component}/const.py`, `${component}/frontend/powermesh-energy-card.js`, `${component}/manifest.json`,
     `${component}/translations/de.json`, 'LICENSE',
@@ -74,7 +74,7 @@ test('version drift, JSON secret files and links are rejected before output', (t
   const work = fixture(t);
   writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "1.0.0"\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
-  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.7"\n');
+  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.8"\n');
   const yaml = join(work, component, 'secrets.yaml');
   writeFileSync(yaml, 'token: SYNTHETIC_NEVER\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
@@ -92,16 +92,18 @@ test('version drift, JSON secret files and links are rejected before output', (t
   assert.equal(existsSync(join(work, 'dist')), false);
 });
 
-globalThis.HTMLElement = class {};
+globalThis.HTMLElement = class {
+  attachShadow() { this.shadowRoot = {}; }
+};
 globalThis.customElements = { get: () => undefined, define: () => {} };
 globalThis.window = { customCards: [] };
 const cardSource = readFileSync(join(root, component, 'frontend/powermesh-energy-card.js'), 'utf8');
 const {
   sourceValue, signedPowerValue, roleEntities, summedSourceValue, averagedSourceValue,
-  configuredEnergyRoles, bandGeometry, sparklinePath, timelineSegments, numericState,
+  configuredEnergyRoles, bandGeometry, historyGeometry, timelineSegments, numericState,
   smoothHistory, powerHistoryGeometry, formatMeterDigits, ferrarisSpeed, meterStyleConfig,
   VFD_SEGMENTS, renderVfdDigitSvg, PowermeshMeterCard, PowermeshMeterCardEditor,
-  PowermeshEnergyCard, PowermeshAnomalyCard,
+  PowermeshEnergyCard, PowermeshAnomalyCard, energyHistorySources,
   resolveGridImportPower, simulateDiscPhysics, extractWatts, isPowerSensor,
   estimatePowerFromEnergyChanges, computeFerrarisDrumPositions, ferrarisSerialNumber,
   drawFerrarisDiscCanvas,
@@ -204,7 +206,7 @@ test('energy card aligns metrics and offers a time-weighted optional power histo
   assert.equal(chart.lines.length, 2);
   assert.equal(chart.grid.length, 5);
   assert.equal(chart.ticks.length, 3);
-  assert.match(chart.lines[0].path, /^M42 /);
+  assert.ok(chart.lines[0].path.startsWith(`M${chart.left} `));
   const held = powerHistoryGeometry([
     { role: 'solar_power', unit: 'W', points: [[-100, 500]] },
   ], 0, 3600, 360, 156);
@@ -225,20 +227,52 @@ test('anomaly widget positions the learned band and flags values outside it', ()
   assert.equal(bandGeometry(100, undefined, 80), null);
 });
 
+test('energy history colors distinguish repeated roles and combined power directions', () => {
+  const config = {
+    entity: 'sensor.overview', grid_power_entity: 'sensor.grid', battery_power_entity: 'sensor.battery',
+  };
+  const states = { 'sensor.overview': { attributes: { roles: {
+    solar_power: ['sensor.roof', 'sensor.garage'], consumer_power: ['sensor.car', 'sensor.pump'],
+    battery_soc: 'sensor.charge', grid_import_power: 'sensor.old_grid',
+  } } } };
+  const initial = energyHistorySources(config, states);
+  assert.equal(initial.length, 8);
+  assert.equal(new Set(initial.map(({ color }) => color)).size, initial.length);
+  assert.equal(initial.filter(({ entity }) => entity === 'sensor.grid').length, 2);
+  assert.ok(initial.every(({ entity }) => !['sensor.charge', 'sensor.old_grid'].includes(entity)));
+  const card = new PowermeshEnergyCard();
+  const key = 'solar_power:sensor.garage';
+  card.setConfig({ ...config, history_colors: { [key]: '#123456' } });
+  const custom = energyHistorySources(card._config, states);
+  assert.equal(custom.find((series) => series.key === key).color, '#123456');
+  assert.deepEqual(custom.filter((series) => series.key !== key), initial.filter((series) => series.key !== key));
+  assert.throws(() => card.setConfig({ ...config, history_colors: { [key]: 'red' } }), /Kurvenfarben/);
+});
+
 test('optional history chart draws a step line with gaps and the learned band', () => {
-  const chart = sparklinePath([[-10, 10], [50, 20], [60, Number.NaN], [80, 10]], 0, 100, 100, 10, 10, 20);
-  assert.deepEqual(chart, { path: 'M0 9.5 H50 V0.5 H60 M80 9.5 H100', bandTop: 0.5, bandBottom: 9.5 });
-  assert.equal(sparklinePath([[10, Number.NaN]], 0, 100, 100, 10), null);
-  assert.equal(sparklinePath([[10, 5]], 100, 100, 100, 10), null);
-  assert.equal(sparklinePath([[10, 5]], 0, 100, 100, 10).bandTop, null);
+  const series = [{ unit: '°C', points: [[-10, -5], [50, 10], [60, NaN], [80, 0], [120, 100]] }];
+  const chart = historyGeometry(series, 0, 100, 360, 156, 0, 'de', { band: [-4, 8] });
+  assert.equal(chart.grid.length, 5);
+  assert.ok(chart.grid.every(({ unit }) => unit === '°C'));
+  assert.ok(chart.grid.at(-1).label.startsWith('-'));
+  assert.equal(chart.ticks.length, 3);
+  assert.ok(chart.bandTop > chart.top && chart.bandBottom > chart.bandTop && chart.bandBottom < chart.bottom);
+  assert.equal(chart.lines[0].path.match(/M/g).length, 2);
+  assert.ok(chart.lines[0].path.startsWith(`M${chart.left} `));
+  assert.ok(chart.lines[0].path.endsWith(`H${chart.right}`));
+  assert.equal(historyGeometry([{ points: [[10, NaN]] }], 0, 100, 360, 156), null);
+  assert.equal(historyGeometry(series, 100, 100, 360, 156), null);
+  assert.equal(historyGeometry(series, 0, 100, 360, 156).bandTop, null);
   assert.equal(numericState('12.5'), 12.5);
   for (const value of ['unavailable', 'unknown', '', '0x10', 'Infinity', null]) assert.ok(Number.isNaN(numericState(value)));
-  const raw = [[0, 0], [30, 100], [60, 0]];
-  const rawPath = sparklinePath(raw, 0, 60, 100, 50, 20, 80).path;
-  const smoothedPath = sparklinePath(smoothHistory(raw, 60), 0, 60, 100, 50, 20, 80).path;
-  assert.notEqual(smoothedPath, rawPath);
-  assert.match(cardSource, /smoothHistory\(history\.series\[monitor\.entity_id\] \|\| \[\]/);
+  const smoothed = historyGeometry(series, 0, 100, 360, 156, 60, 'de', { band: [-4, 8] });
+  assert.notEqual(smoothed.lines[0].path, chart.lines[0].path);
+  assert.equal(smoothed.lines[0].path.match(/M/g).length, 2);
   assert.match(cardSource, /name: "smoothing_minutes", selector: \{ number: \{ min: 0, max: 60/);
+});
+
+test('anomaly card header template contains no loose CSS', () => {
+  assert.match(new PowermeshAnomalyCard().shadowRoot.innerHTML, /^\s*<style>[^<]*ha-card\.no-header header[^<]*<\/style>\s*<ha-card>/);
 });
 
 test('optional timeline positions findings in the window and keeps open findings until now', () => {
