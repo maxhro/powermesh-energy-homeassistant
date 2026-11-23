@@ -1143,6 +1143,147 @@ export function ferrarisSpeed(powerWatts) {
   };
 }
 
+export function computeFerrarisDrumPositions(rawValue, decimals = 1, minIntegerDigits = 6) {
+  if (rawValue == null || !Number.isFinite(Number(rawValue))) return null;
+  const clampedDec = Math.max(0, Math.min(3, Math.round(Number(decimals) || 0)));
+  const factor = 10 ** clampedDec;
+  const absVal = Math.abs(Number(rawValue));
+  const intFloor = Math.floor(absVal);
+  const intDigitsCount = Math.max(minIntegerDigits, String(intFloor).length);
+  const totalDrums = intDigitsCount + clampedDec;
+  const scaled = absVal * factor;
+
+  const positions = new Array(totalDrums);
+  for (let idx = totalDrums - 1; idx >= 0; idx--) {
+    const placeFromRight = totalDrums - 1 - idx;
+    if (placeFromRight === 0) {
+      const rem = scaled % 10;
+      positions[idx] = rem < 0.005 ? 0 : rem > 9.995 ? 0 : Math.round(rem * 1000) / 1000;
+    } else {
+      const divisor = 10 ** placeFromRight;
+      // Add tiny epsilon to avoid float floor drift like 2.9999999999999996
+      const baseDigit = Math.floor((scaled + 1e-9) / divisor) % 10;
+      const rightPos = positions[idx + 1];
+      const carry = rightPos > 9 ? rightPos - 9 : 0;
+      positions[idx] = Math.round((baseDigit + carry) * 1000) / 1000;
+    }
+  }
+  return positions;
+}
+
+export function ferrarisSerialNumber(seedText) {
+  const str = String(seedText || "powermesh.ferraris");
+  let hash = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const sixDigits = String((hash >>> 0) % 1000000).padStart(6, "0");
+  return `21 ${sixDigits.slice(0, 3)} ${sixDigits.slice(3, 6)}`;
+}
+
+export function energyToWh(value, unit) {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  const num = Number(value);
+  const u = unit == null || unit === "" ? "kWh" : String(unit).trim();
+  if (u === "Wh") return num;
+  if (u === "kWh") return num * 1000;
+  if (u === "MWh") return num * 1000000;
+  if (u === "GWh") return num * 1000000000;
+  if (u === "GJ") return num * (1000000 / 3.6);
+  if (u === "MJ") return num * (1000 / 3.6);
+  return null;
+}
+
+function decayedEstimatedPower(entry, nowMs) {
+  if (!entry || entry.estimatedWatts == null) return null;
+  if (entry.estimatedWatts === 0) return 0;
+  const last = entry.samples[entry.samples.length - 1];
+  if (!last) return null;
+  const elapsedSec = Math.max(0, (nowMs - last.time) / 1000);
+  if (elapsedSec > 3600) return 0;
+  const holdSec = Math.min(1800, Math.max(45, (entry.lastIntervalSec || 60) * 1.5));
+  if (elapsedSec <= holdSec) return entry.estimatedWatts;
+  const decayed = entry.estimatedWatts * (holdSec / elapsedSec);
+  return Math.abs(decayed) < 2 ? 0 : decayed;
+}
+
+export function estimatePowerFromEnergyChanges(store, entityId, currentVal, unit, options = {}) {
+  if (!store || !entityId) return null;
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const existing = store.get(entityId);
+  if (currentVal == null || !Number.isFinite(Number(currentVal))) {
+    return decayedEstimatedPower(existing, nowMs);
+  }
+  const currentWh = energyToWh(currentVal, unit);
+  if (currentWh == null) return null;
+
+  const rawStamp = options.sampleTimeMs;
+  const stamp = Number.isFinite(rawStamp) && rawStamp <= nowMs + 60000 ? rawStamp : nowMs;
+  if (!existing || !Array.isArray(existing.samples) || existing.samples.length === 0) {
+    store.set(entityId, {
+      samples: [{ val: Number(currentVal), wh: currentWh, time: stamp }],
+      estimatedWatts: null,
+      lastStepWh: null,
+      lastIntervalSec: null,
+    });
+    return null;
+  }
+
+  const last = existing.samples[existing.samples.length - 1];
+  if (Math.abs(currentWh - last.wh) < 1e-6) {
+    return decayedEstimatedPower(existing, nowMs);
+  }
+
+  const effectiveTime = stamp > last.time ? stamp : nowMs > last.time ? nowMs : last.time;
+  let anchor = null;
+  for (let i = existing.samples.length - 1; i >= 0; i--) {
+    if ((effectiveTime - existing.samples[i].time) / 1000 >= 0.5) {
+      anchor = existing.samples[i];
+      break;
+    }
+  }
+
+  if (!anchor) {
+    return decayedEstimatedPower(existing, nowMs);
+  }
+
+  const dtSec = (effectiveTime - anchor.time) / 1000;
+  if (dtSec > 7200) {
+    existing.samples = [{ val: Number(currentVal), wh: currentWh, time: effectiveTime }];
+    existing.estimatedWatts = null;
+    existing.lastStepWh = null;
+    existing.lastIntervalSec = null;
+    return null;
+  }
+
+  const deltaWh = currentWh - anchor.wh;
+  if (deltaWh < 0 && (options.stateClass === "total_increasing" || currentWh < anchor.wh * 0.5)) {
+    existing.samples = [{ val: Number(currentVal), wh: currentWh, time: effectiveTime }];
+    existing.estimatedWatts = 0;
+    existing.lastStepWh = null;
+    return 0;
+  }
+
+  const instantWatts = (deltaWh * 3600) / dtSec;
+  if (!Number.isFinite(instantWatts) || Math.abs(instantWatts) > 100000) {
+    existing.samples = [{ val: Number(currentVal), wh: currentWh, time: effectiveTime }];
+    return decayedEstimatedPower(existing, nowMs);
+  }
+
+  const prior = decayedEstimatedPower(existing, effectiveTime);
+  const smoothed = prior != null && Math.abs(prior) >= 2 && Math.sign(prior) === Math.sign(instantWatts)
+    ? instantWatts * 0.7 + prior * 0.3
+    : instantWatts;
+
+  existing.samples.push({ val: Number(currentVal), wh: currentWh, time: effectiveTime });
+  if (existing.samples.length > 8) existing.samples.shift();
+  existing.lastStepWh = Math.abs(deltaWh);
+  existing.lastIntervalSec = dtSec;
+  existing.estimatedWatts = smoothed;
+  return decayedEstimatedPower(existing, nowMs);
+}
+
 export function isPowerSensor(state) {
   if (!state) return false;
   const devClass = state.attributes?.device_class;
@@ -1302,11 +1443,203 @@ export function renderVfdDigitSvg(char) {
 }
 
 
+const FERRARIS_DRUM_HEIGHT = 32;
+const FERRARIS_HISTORY_LOOKBACK_MS = 2 * 3600 * 1000;
+
+function createFerrarisSvg(viewBox, innerMarkup, className = "") {
+  const wrap = document.createElement("span");
+  if (className) wrap.className = className;
+  wrap.setAttribute("aria-hidden", "true");
+  wrap.innerHTML = `<svg viewBox="${viewBox}" focusable="false">${innerMarkup}</svg>`;
+  return wrap;
+}
+
+export function drawFerrarisDiscCanvas(canvas, position = 0, velocity = 0, reverse = false) {
+  if (!canvas || typeof canvas.getContext !== "function") return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const cssW = canvas.clientWidth || 220;
+  const cssH = canvas.clientHeight || 22;
+  const dpr = Math.min(3, (typeof window !== "undefined" && window.devicePixelRatio) || 2);
+  const pw = Math.max(120, Math.round(cssW * dpr));
+  const ph = Math.max(16, Math.round(cssH * dpr));
+  if (canvas.width !== pw || canvas.height !== ph) {
+    canvas.width = pw;
+    canvas.height = ph;
+  }
+
+  const W = pw / dpr;
+  const H = ph / dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  // 1. Deep recessed black cavity
+  const cavityGrad = ctx.createLinearGradient(0, 0, 0, H);
+  cavityGrad.addColorStop(0, "#010203");
+  cavityGrad.addColorStop(0.3, "#090b0e");
+  cavityGrad.addColorStop(0.7, "#090b0e");
+  cavityGrad.addColorStop(1, "#010203");
+  ctx.fillStyle = cavityGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  const cx = W / 2;
+  const R = W * 0.475;
+  const discH = Math.max(7.5, Math.min(10.2, H * 0.72));
+  const discTop = (H - discH) / 2;
+  const discBottom = discTop + discH;
+
+  // 2. Subtle vertical rotor spindle / axle in cavity above/below disc
+  const shaftW = 2.4;
+  const shaftGrad = ctx.createLinearGradient(cx - shaftW / 2, 0, cx + shaftW / 2, 0);
+  shaftGrad.addColorStop(0, "#101216");
+  shaftGrad.addColorStop(0.5, "#464b54");
+  shaftGrad.addColorStop(1, "#0e1014");
+  ctx.fillStyle = shaftGrad;
+  ctx.fillRect(cx - shaftW / 2, 0.5, shaftW, H - 1);
+
+  // 3. Front 3D cylindrical machined aluminum disc rim
+  ctx.save();
+  ctx.beginPath();
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(cx - R, discTop, R * 2, discH, 0.8);
+  } else {
+    ctx.rect(cx - R, discTop, R * 2, discH);
+  }
+  ctx.clip();
+
+  const rimGrad = ctx.createLinearGradient(cx - R, 0, cx + R, 0);
+  rimGrad.addColorStop(0.0, "#34383f");
+  rimGrad.addColorStop(0.05, "#a6acb5");
+  rimGrad.addColorStop(0.22, "#f3f5f8");
+  rimGrad.addColorStop(0.42, "#cfd4dc");
+  rimGrad.addColorStop(0.54, "#b8bec8");
+  rimGrad.addColorStop(0.78, "#f4f6f9");
+  rimGrad.addColorStop(0.95, "#9ea4ae");
+  rimGrad.addColorStop(1.0, "#2f333a");
+  ctx.fillStyle = rimGrad;
+  ctx.fillRect(cx - R, discTop, R * 2, discH);
+
+  // Rotation angle: forward consumption (velocity < 0 -> position decreases) rotates left-to-right (+angle)
+  const angle = (-position / 50) * Math.PI * 2;
+  const normAngle = Math.atan2(Math.sin(angle), Math.cos(angle));
+  const speedAbs = Math.abs(velocity);
+
+  // 4. Fine circumferential milled knurling graduations (160 divisions around 360°)
+  const toothContrast = Math.max(0.14, 1 - Math.min(0.84, speedAbs / 70));
+  const teethCount = 160;
+  for (let k = 0; k < teethCount; k++) {
+    const theta = angle + (k / teethCount) * Math.PI * 2;
+    const cosT = Math.cos(theta);
+    if (cosT <= 0.03) continue;
+    const sinT = Math.sin(theta);
+    const x = cx + R * sinT;
+    const pitch = ((Math.PI * 2 * R) / teethCount) * cosT;
+
+    const grooveAlpha = 0.78 * toothContrast * (0.35 + 0.65 * cosT);
+    ctx.fillStyle = `rgba(16, 18, 22, ${grooveAlpha.toFixed(3)})`;
+    ctx.fillRect(x - pitch * 0.25, discTop + 0.35, Math.max(0.45, pitch * 0.34), discH - 0.7);
+
+    const ridgeAlpha = 0.62 * toothContrast * (0.25 + 0.75 * cosT);
+    ctx.fillStyle = `rgba(255, 255, 255, ${ridgeAlpha.toFixed(3)})`;
+    ctx.fillRect(x + pitch * 0.1, discTop + 0.35, Math.max(0.4, pitch * 0.30), discH - 0.7);
+  }
+
+  // 5. Crisp lacquer calibration mark (Eichmarke) painted onto the milled rim
+  const halfArc = 0.155;
+  const markStart = Math.max(-Math.PI / 2, normAngle - halfArc);
+  const markEnd = Math.min(Math.PI / 2, normAngle + halfArc);
+  if (markEnd > markStart) {
+    const x1 = cx + R * Math.sin(markStart);
+    const x2 = cx + R * Math.sin(markEnd);
+    const trail = Math.min(14, speedAbs * 0.14);
+    const drawLeft = velocity < 0 ? x1 - trail : x1;
+    const drawRight = velocity > 0 ? x2 + trail : x2;
+    const markW = Math.max(1.5, drawRight - drawLeft);
+    const markGrad = ctx.createLinearGradient(drawLeft, 0, drawRight, 0);
+    if (trail > 1.2 && velocity < 0) {
+      markGrad.addColorStop(0, "rgba(175, 28, 28, 0.05)");
+      markGrad.addColorStop(Math.min(0.45, trail / markW), "rgba(175, 28, 28, 0.85)");
+      markGrad.addColorStop(0.75, "#b91c1c");
+      markGrad.addColorStop(1, "#7f1d1d");
+    } else if (trail > 1.2 && velocity > 0) {
+      markGrad.addColorStop(0, "#7f1d1d");
+      markGrad.addColorStop(0.25, "#b91c1c");
+      markGrad.addColorStop(Math.max(0.55, 1 - trail / markW), "rgba(175, 28, 28, 0.85)");
+      markGrad.addColorStop(1, "rgba(175, 28, 28, 0.05)");
+    } else {
+      markGrad.addColorStop(0, "#5c1414");
+      markGrad.addColorStop(0.12, "#a31d1d");
+      markGrad.addColorStop(0.5, "#c52222");
+      markGrad.addColorStop(0.88, "#9e1b1b");
+      markGrad.addColorStop(1, "#5c1414");
+    }
+    ctx.fillStyle = markGrad;
+    ctx.fillRect(drawLeft, discTop + 0.3, markW, discH - 0.6);
+
+    // Subtle milled texture showing faintly through the painted lacquer
+    for (let k = 0; k < teethCount; k++) {
+      const theta = angle + (k / teethCount) * Math.PI * 2;
+      const rel = Math.atan2(Math.sin(theta - normAngle), Math.cos(theta - normAngle));
+      if (Math.abs(rel) > halfArc || Math.cos(theta) <= 0.05) continue;
+      const tx = cx + R * Math.sin(theta);
+      ctx.fillStyle = `rgba(0, 0, 0, ${(0.22 * toothContrast).toFixed(3)})`;
+      ctx.fillRect(tx, discTop + 0.5, 0.6, discH - 1.0);
+    }
+  }
+
+  // Spun-metal horizontal motion sheen at higher velocities
+  if (speedAbs > 12) {
+    const sheenAlpha = Math.min(0.3, (speedAbs - 12) / 140);
+    const sheenGrad = ctx.createLinearGradient(0, discTop, 0, discBottom);
+    sheenGrad.addColorStop(0, `rgba(255,255,255,${(sheenAlpha * 0.85).toFixed(3)})`);
+    sheenGrad.addColorStop(0.5, `rgba(240,244,248,${sheenAlpha.toFixed(3)})`);
+    sheenGrad.addColorStop(1, `rgba(0,0,0,${(sheenAlpha * 0.7).toFixed(3)})`);
+    ctx.fillStyle = sheenGrad;
+    ctx.fillRect(cx - R, discTop, R * 2, discH);
+  }
+
+  // Crisp metallic top & bottom edge bevels
+  const rimVert = ctx.createLinearGradient(0, discTop, 0, discBottom);
+  rimVert.addColorStop(0, "rgba(255, 255, 255, 0.62)");
+  rimVert.addColorStop(0.16, "rgba(255, 255, 255, 0.08)");
+  rimVert.addColorStop(0.8, "rgba(0, 0, 0, 0.08)");
+  rimVert.addColorStop(1, "rgba(0, 0, 0, 0.68)");
+  ctx.fillStyle = rimVert;
+  ctx.fillRect(cx - R, discTop, R * 2, discH);
+
+  // Subtle curved falloff only at the outermost 8% tangent ends
+  const edgeShadeL = ctx.createLinearGradient(cx - R, 0, cx - R + R * 0.1, 0);
+  edgeShadeL.addColorStop(0, "rgba(8, 9, 12, 0.75)");
+  edgeShadeL.addColorStop(1, "rgba(8, 9, 12, 0)");
+  ctx.fillStyle = edgeShadeL;
+  ctx.fillRect(cx - R, discTop, R * 0.1, discH);
+
+  const edgeShadeR = ctx.createLinearGradient(cx + R - R * 0.1, 0, cx + R, 0);
+  edgeShadeR.addColorStop(0, "rgba(8, 9, 12, 0)");
+  edgeShadeR.addColorStop(1, "rgba(8, 9, 12, 0.75)");
+  ctx.fillStyle = edgeShadeR;
+  ctx.fillRect(cx + R - R * 0.1, discTop, R * 0.1, discH);
+
+  ctx.restore();
+
+  // 6. Crisp recessed slot lip shadow
+  const slotShadow = ctx.createLinearGradient(0, 0, 0, H);
+  slotShadow.addColorStop(0, "rgba(0, 0, 0, 0.7)");
+  slotShadow.addColorStop(0.18, "rgba(0, 0, 0, 0)");
+  slotShadow.addColorStop(0.84, "rgba(0, 0, 0, 0)");
+  slotShadow.addColorStop(1, "rgba(0, 0, 0, 0.6)");
+  ctx.fillStyle = slotShadow;
+  ctx.fillRect(0, 0, W, H);
+}
+
 export class PowermeshMeterCard extends HTMLElement {
   constructor() {
     super();
     this._discAnimations = new Map();
-    this._lastEnergy = new Map();
+    this._energyEstimator = new Map();
+    this._seededHistoryEntities = new Set();
+    this._historyLoadingEntities = new Set();
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `
       <style>
@@ -1330,40 +1663,470 @@ export class PowermeshMeterCard extends HTMLElement {
         .modern-power-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; background: var(--secondary-background-color); font-weight: 500; }
         .modern-power-badge.export { color: var(--success-color, #10b981); }
 
-        .style-ferraris { background: radial-gradient(ellipse at 50% 15%, #2d2e32 0%, #17181a 60%, #0d0e10 100%); border: 2px solid #3d3e42; border-radius: 12px; padding: 16px 18px 20px; box-shadow: inset 0 1px 1px rgba(255,255,255,0.18), inset 0 -3px 12px rgba(0,0,0,0.8), 0 6px 16px rgba(0,0,0,0.4); position: relative; color: #e5e5e5; display: flex; flex-direction: column; align-items: center; gap: 14px; user-select: none; cursor: pointer; }
-        .ferraris-screws { position: absolute; top: 8px; left: 8px; right: 8px; bottom: 8px; pointer-events: none; }
-        .screw { position: absolute; width: 10px; height: 10px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #888 0%, #444 60%, #222 100%); box-shadow: inset 0 1px 1px rgba(255,255,255,0.3), 0 1px 2px rgba(0,0,0,0.6); }
-        .screw::after { content: ""; position: absolute; top: 4.5px; left: 1.5px; width: 7px; height: 1px; background: #111; box-shadow: 0 1px 0 rgba(255,255,255,0.2); transform: rotate(35deg); }
-        .screw.tl { top: 0; left: 0; }
-        .screw.tr { top: 0; right: 0; }
-        .screw.bl { bottom: 0; left: 0; }
-        .screw.br { bottom: 0; right: 0; }
-        .ferraris-plate { text-align: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: 1px; }
-        .ferraris-brand { font-size: 13px; font-weight: 800; color: #ffb74d; text-shadow: 0 1px 2px rgba(0,0,0,0.8); margin-bottom: 2px; }
-        .ferraris-type { font-size: 9px; letter-spacing: 1.5px; color: #a0a0a0; text-transform: uppercase; }
-        .ferraris-specs { font-size: 9px; letter-spacing: 0.5px; color: #888; margin-top: 2px; }
-        .ferraris-odometer-housing { background: #000; border: 2px solid #2a2a2c; border-radius: 6px; padding: 5px 8px; box-shadow: inset 0 4px 10px rgba(0,0,0,0.95), 0 1px 2px rgba(255,255,255,0.1); display: inline-flex; align-items: center; gap: 2px; }
-        .ferraris-drums { display: flex; gap: 1.5px; background: #111; padding: 2px; border-radius: 4px; }
-        .ferraris-drum { width: 22px; height: 34px; position: relative; overflow: hidden; border-radius: 2px; box-shadow: inset 0 0 2px rgba(0,0,0,0.5); font-family: "Courier New", Courier, monospace; font-size: 22px; font-weight: 800; line-height: 34px; text-align: center; }
-        .ferraris-drum.integer { background-color: #f7f3e8; color: #111; }
-        .ferraris-drum.decimal { background-color: #c62828; color: #fff; }
-        .ferraris-drum-ribbon { display: flex; flex-direction: column; position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
-        .ferraris-drum-ribbon.animated { transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.3, 1); }
-        .ferraris-digit-cell { height: 34px; line-height: 34px; text-align: center; flex: none; }
+        /* Style 1: Authentic Ferraris Induktionszähler (Bakelite housing & brushed silver dial plate) */
+        .style-ferraris {
+          background:
+            radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.16) 0%, transparent 55%),
+            linear-gradient(168deg, #24272c 0%, #111316 14%, #08090b 65%, #14161a 100%);
+          border: 1.5px solid #2b2e34;
+          border-radius: 18px;
+          padding: 17px 18px 19px;
+          box-shadow:
+            inset 0 2px 3px rgba(255, 255, 255, 0.30),
+            inset 0 -4px 8px rgba(0, 0, 0, 0.92),
+            inset 3px 0 4px rgba(255, 255, 255, 0.09),
+            inset -3px 0 4px rgba(255, 255, 255, 0.06),
+            0 10px 24px rgba(0, 0, 0, 0.48);
+          position: relative;
+          user-select: none;
+          cursor: pointer;
+          box-sizing: border-box;
+          font-family: "DIN Alternate", "Bahnschrift", "Roboto Condensed", "Arial Narrow", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        .style-ferraris::before {
+          content: "";
+          position: absolute;
+          top: 3px;
+          left: 16px;
+          right: 16px;
+          height: 3.5px;
+          border-radius: 4px;
+          background: linear-gradient(90deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.28) 22%, rgba(255,255,255,0.38) 50%, rgba(255,255,255,0.28) 78%, rgba(255,255,255,0.04) 100%);
+          pointer-events: none;
+        }
+        .ferraris-bezel {
+          background: linear-gradient(180deg, #030405 0%, #171a1e 100%);
+          border-radius: 11px;
+          padding: 4px;
+          box-shadow: 0 1px 1px rgba(255, 255, 255, 0.16), inset 0 3px 7px rgba(0, 0, 0, 0.98);
+        }
+        .ferraris-faceplate {
+          position: relative;
+          overflow: hidden;
+          border-radius: 8px;
+          background:
+            repeating-linear-gradient(90deg, rgba(255,255,255,0.018) 0px, rgba(255,255,255,0.018) 1px, rgba(0,0,0,0.012) 1px, rgba(0,0,0,0.012) 2px),
+            radial-gradient(ellipse at 50% 22%, #e6e8e9 0%, #dadde0 56%, #c8cdd1 100%);
+          box-shadow:
+            inset 0 5px 11px rgba(0, 0, 0, 0.36),
+            inset 0 -4px 9px rgba(0, 0, 0, 0.22),
+            inset 4px 0 9px rgba(0, 0, 0, 0.20),
+            inset -4px 0 9px rgba(0, 0, 0, 0.20);
+          padding: 14px 16px 12px;
+          color: #1c1e22;
+          display: flex;
+          flex-direction: column;
+          gap: 9px;
+        }
+        .ferraris-glass-reflection {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          z-index: 4;
+          background: linear-gradient(124deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.07) 26%, rgba(255,255,255,0) 37%, rgba(255,255,255,0) 78%, rgba(255,255,255,0.08) 100%);
+        }
+        .ferraris-register-row {
+          display: grid;
+          grid-template-columns: 1fr auto 1fr;
+          align-items: center;
+          gap: 10px;
+          margin-top: 2px;
+        }
+        .ferraris-safety-marks {
+          justify-self: end;
+          margin-right: 4px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+          color: #202327;
+        }
+        .ferraris-safety-marks svg { width: 17px; height: 36px; display: block; }
+        .ferraris-register-col {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
+        .ferraris-odometer-housing {
+          display: inline-flex;
+          align-items: stretch;
+          background: #1d2024;
+          border-radius: 2px;
+          box-shadow: 0 1px 0 rgba(255,255,255,0.55), 0 2px 5px rgba(0,0,0,0.28);
+          position: relative;
+        }
+        .ferraris-drums-int-wrap {
+          padding: 5px 3px 5px 6px;
+          background: #202327;
+          display: flex;
+          align-items: center;
+          position: relative;
+        }
+        .ferraris-drums-int-wrap.all-integer {
+          padding-right: 6px;
+        }
+        .ferraris-drums-dec-wrap {
+          padding: 5px 10px 5px 3px;
+          background: #bf2c27;
+          display: flex;
+          align-items: center;
+          position: relative;
+        }
+        /* White/silver graduation ticks on the right red decimal border */
+        .ferraris-drums-dec-wrap::after {
+          content: "";
+          position: absolute;
+          right: 1.5px;
+          top: 9px;
+          bottom: 9px;
+          width: 4px;
+          background: linear-gradient(
+            180deg,
+            transparent 0%,
+            transparent 18%,
+            rgba(240,242,244,0.88) 18%,
+            rgba(240,242,244,0.88) 24%,
+            transparent 24%,
+            transparent 47%,
+            rgba(240,242,244,0.95) 47%,
+            rgba(240,242,244,0.95) 53%,
+            transparent 53%,
+            transparent 76%,
+            rgba(240,242,244,0.88) 76%,
+            rgba(240,242,244,0.88) 82%,
+            transparent 82%
+          );
+          pointer-events: none;
+        }
+        /* Angled white comma mark at bottom seam between integer and decimal frames */
+        .ferraris-comma-wedge {
+          position: absolute;
+          bottom: 0;
+          left: -2.5px;
+          width: 3px;
+          height: 8px;
+          background: #eef0f2;
+          transform: skewX(-20deg);
+          z-index: 3;
+          pointer-events: none;
+          box-shadow: 0 0 1px rgba(0,0,0,0.5);
+        }
+        .ferraris-drums {
+          display: flex;
+          gap: 2px;
+          background: #08090b;
+          padding: 2px 3px;
+          box-shadow: inset 0 2px 5px rgba(0,0,0,0.95);
+        }
+        .ferraris-drum {
+          --drum-win-h: 30px;
+          --drum-step: 24px;
+          width: 20px;
+          height: var(--drum-win-h);
+          position: relative;
+          overflow: hidden;
+          border-radius: 1px;
+          background-color: #16181b;
+          color: #f3f4f6;
+          box-shadow: inset 0 0 2px rgba(0,0,0,0.75);
+          font-size: 20.5px;
+          font-weight: 700;
+          line-height: var(--drum-step);
+          text-align: center;
+          font-variant-numeric: tabular-nums;
+        }
+        .ferraris-drum::after {
+          content: "";
+          position: absolute;
+          left: 1px;
+          bottom: 1px;
+          width: 2px;
+          height: 3px;
+          background: rgba(215, 220, 226, 0.42);
+          border-radius: 0.5px;
+          pointer-events: none;
+          z-index: 2;
+        }
+        .ferraris-drum-ribbon {
+          display: flex;
+          flex-direction: column;
+          position: absolute;
+          top: calc((var(--drum-win-h) - var(--drum-step)) / 2 - var(--drum-step));
+          left: 0;
+          right: 0;
+          will-change: transform;
+        }
+        .ferraris-drum-ribbon.animated { transition: transform 0.55s cubic-bezier(0.22, 0.8, 0.32, 1); }
+        .ferraris-digit-cell { height: var(--drum-step); line-height: var(--drum-step); text-align: center; flex: none; }
+        .ferraris-drum-shade {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          z-index: 2;
+          background-image: linear-gradient(
+            180deg,
+            rgba(0,0,0,0.72) 0%,
+            rgba(0,0,0,0.16) 22%,
+            rgba(255,255,255,0.07) 36%,
+            transparent 50%,
+            rgba(0,0,0,0.18) 76%,
+            rgba(0,0,0,0.76) 100%
+          );
+        }
+        .ferraris-unit-tag {
+          justify-self: start;
+          color: #1c1e22;
+          font-weight: 800;
+          font-size: 18px;
+          letter-spacing: -0.2px;
+          padding-left: 2px;
+        }
+        .ferraris-keeper-tab {
+          width: 24px;
+          height: 7px;
+          margin-top: 7px;
+          background: linear-gradient(180deg, #0d0e11 0%, #0d0e11 45%, #8a7b58 46%, #a89872 76%, #5d523a 100%);
+          border-radius: 1px;
+          box-shadow: inset 0 1px 2px rgba(0,0,0,0.9), 0 1px 0 rgba(255,255,255,0.55);
+        }
 
-        .ferraris-drum-shade { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; background-image: linear-gradient(180deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.08) 25%, transparent 45%, transparent 55%, rgba(0,0,0,0.1) 75%, rgba(0,0,0,0.65) 100%); box-shadow: inset 0 1px 1px rgba(255,255,255,0.15); }
-        .ferraris-separator { color: #fff; font-size: 20px; font-weight: bold; padding: 0 1px; }
-        .ferraris-unit-tag { color: #ff3d00; font-weight: 800; font-size: 13px; padding-left: 6px; letter-spacing: 0.5px; }
-        .ferraris-chamber { width: 90%; max-width: 280px; background: #080809; border: 2px solid #222326; border-radius: 6px; padding: 6px 10px; box-shadow: inset 0 3px 8px rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; gap: 6px; transition: box-shadow 0.3s ease; }
-        .ferraris-chamber.solar-export { box-shadow: inset 0 0 14px rgba(16, 185, 129, 0.4), inset 0 3px 8px rgba(0,0,0,0.9); border-color: rgba(16, 185, 129, 0.5); }
-        .ferraris-window { width: 100%; height: 24px; position: relative; overflow: hidden; border-radius: 4px; background: #111; box-shadow: inset 0 2px 4px rgba(0,0,0,0.8); }
-        .ferraris-window-glass { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 2; background: linear-gradient(180deg, rgba(255,255,255,0.2) 0%, transparent 40%, rgba(0,0,0,0.3) 100%); border: 1px solid rgba(255,255,255,0.08); }
-        .ferraris-disc-track { position: absolute; top: 0; left: 0; width: 200%; height: 100%; display: flex; will-change: transform; transform: translate3d(0, 0, 0); }
-        .ferraris-disc-half { width: 50%; height: 100%; position: relative; background: repeating-linear-gradient(90deg, #8c8d91 0px, #8c8d91 4px, #58595d 5px, #d1d2d6 9px, #707175 14px); }
-        .ferraris-mark { position: absolute; top: 0; bottom: 0; left: 45%; width: 8px; background: #e53935; box-shadow: 0 0 4px #e53935; }
-        @keyframes ferraris-spin { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
-        .ferraris-power-info { font-size: 11px; color: #aaa; display: flex; align-items: center; gap: 6px; }
-        .ferraris-power-info.export { color: #34d399; }
+        .ferraris-nameplate {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+          margin-top: 1px;
+        }
+        .ferraris-brand-row {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) auto;
+          align-items: end;
+          gap: 8px;
+        }
+        .ferraris-brand {
+          font-size: 16px;
+          font-weight: 800;
+          letter-spacing: -0.3px;
+          color: #191b1f;
+          line-height: 1.05;
+        }
+        .ferraris-designation {
+          font-size: 12.5px;
+          font-weight: 700;
+          color: #1f2226;
+          text-align: center;
+          line-height: 1.15;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+        }
+        .ferraris-ptb-box {
+          border: 1px solid #25282c;
+          font-size: 8.5px;
+          font-weight: 700;
+          line-height: 1.1;
+          color: #1f2226;
+          text-align: center;
+          font-variant-numeric: tabular-nums;
+        }
+        .ferraris-ptb-box div { padding: 1px 3px; }
+        .ferraris-ptb-box div + div { border-top: 1px solid #25282c; }
+        .ferraris-rule {
+          height: 1.2px;
+          background: #23262a;
+          width: 100%;
+        }
+        .ferraris-specs-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 6px;
+          font-size: 12px;
+          font-weight: 700;
+          color: #1c1f23;
+          padding-top: 1px;
+        }
+        .ferraris-amp-badge {
+          background: rgba(247, 248, 249, 0.62);
+          border-radius: 3px;
+          padding: 1px 6px;
+          font-weight: 600;
+          box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.08);
+        }
+
+        .ferraris-rotor-section {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          margin: 3px 0 1px;
+        }
+        .ferraris-rotor-row {
+          width: 100%;
+          display: grid;
+          grid-template-columns: minmax(28px, 1fr) minmax(150px, 64%) minmax(28px, 1fr);
+          align-items: center;
+        }
+        .ferraris-arrow {
+          display: flex;
+          align-items: center;
+          color: #1b1e22;
+          height: 14px;
+        }
+        .ferraris-arrow svg { width: 100%; height: 14px; display: block; overflow: visible; }
+        .ferraris-chamber {
+          width: 100%;
+          background: #17191d;
+          border: 1.5px solid #121417;
+          border-radius: 1px;
+          padding: 4.5px 9px;
+          box-sizing: border-box;
+          box-shadow: 0 1px 0 rgba(255,255,255,0.5), inset 0 1px 3px rgba(0,0,0,0.95);
+          transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+        .ferraris-chamber.solar-export {
+          border-color: #1f6f54;
+          box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.38), inset 0 1px 3px rgba(0,0,0,0.95);
+        }
+        .ferraris-window {
+          width: 100%;
+          height: 13px;
+          position: relative;
+          overflow: hidden;
+          border-radius: 0.5px;
+          background: #040507;
+        }
+        .ferraris-disc-canvas {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          display: block;
+          z-index: 2;
+        }
+        .ferraris-window-glass {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          z-index: 3;
+          background: linear-gradient(180deg, rgba(255,255,255,0.16) 0%, transparent 42%, rgba(0,0,0,0.28) 100%);
+        }
+        .ferraris-disc-track {
+          position: absolute;
+          top: 6px;
+          bottom: 6px;
+          left: 5%;
+          width: 180%;
+          display: flex;
+          will-change: transform;
+          transform: translate3d(0, 0, 0);
+          z-index: 1;
+          opacity: 0.9;
+        }
+        .ferraris-disc-half {
+          width: 50%;
+          height: 100%;
+          position: relative;
+          background: repeating-linear-gradient(90deg, #d8dce2 0px, #d8dce2 2px, #2b2e33 2px, #2b2e33 4px);
+        }
+        .ferraris-mark { position: absolute; top: 0; bottom: 0; left: 45%; width: 12px; background: #b71c1c; }
+        .ferraris-center-tick {
+          width: 3px;
+          height: 8px;
+          background: #1b1e22;
+          margin-top: 0;
+        }
+
+        .ferraris-bottom-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 10px;
+          margin-top: 2px;
+        }
+        .ferraris-serial-col {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          font-size: 11px;
+          font-weight: 600;
+          color: #202327;
+          line-height: 1.22;
+        }
+        .ferraris-nr-line {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          margin-bottom: 1px;
+        }
+        .ferraris-nr-plate {
+          background: #1d2024;
+          color: #f1f3f5;
+          padding: 1px 6px;
+          border-radius: 1px;
+          font-size: 11.5px;
+          font-weight: 600;
+          letter-spacing: 0.5px;
+          font-variant-numeric: tabular-nums;
+          box-shadow: inset 0 1px 2px rgba(0,0,0,0.7);
+        }
+        .ferraris-serial-origin {
+          font-size: 7.5px;
+          letter-spacing: 0.5px;
+          text-transform: uppercase;
+          color: #363a40;
+          margin-top: 1px;
+        }
+        .ferraris-right-col {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 5px;
+          min-width: 0;
+        }
+        .ferraris-power-info {
+          font-size: 10.5px;
+          font-weight: 700;
+          color: #1f2328;
+          background: rgba(248, 249, 250, 0.56);
+          border: 1px solid rgba(32, 35, 39, 0.18);
+          border-radius: 3px;
+          padding: 2px 6px;
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+        }
+        .ferraris-power-info.export {
+          color: #115e3b;
+          background: rgba(209, 250, 229, 0.65);
+          border-color: rgba(17, 94, 59, 0.32);
+        }
+        .ferraris-power-info.estimated {
+          font-weight: 600;
+        }
+        .ferraris-compliance {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .ferraris-sticker-badge {
+          background: rgba(244, 246, 247, 0.68);
+          border: 1px solid rgba(0, 0, 0, 0.09);
+          border-radius: 3px;
+          padding: 2px 4px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: #23262a;
+        }
+        .ferraris-sticker-badge svg { height: 18px; width: auto; display: block; }
+
+        @media (max-width: 390px) {
+          .style-ferraris { padding: 11px; }
+          .ferraris-faceplate { padding: 11px 10px 10px; }
+          .ferraris-drum { --drum-win-h: 26px; --drum-step: 21px; width: 17px; font-size: 18px; }
+          .ferraris-unit-tag { font-size: 15px; }
+          .ferraris-specs-row { font-size: 10.5px; }
+        }
 
         .style-nixie { background: radial-gradient(ellipse at 50% 20%, #1c1108 0%, #0d0703 60%, #050301 100%); border: 2px solid #3d2310; border-radius: 10px; padding: 16px 18px 20px; box-shadow: inset 0 2px 8px rgba(0,0,0,0.9), 0 6px 16px rgba(0,0,0,0.5); display: flex; flex-direction: column; align-items: center; gap: 12px; cursor: pointer; }
         .nixie-title { color: #ff9d42; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; text-shadow: 0 0 6px rgba(255, 120, 0, 0.4); }
@@ -1472,10 +2235,19 @@ export class PowermeshMeterCard extends HTMLElement {
   }
 
   connectedCallback() {
+    if (!this._estimateTimer && typeof window !== "undefined" && typeof window.setInterval === "function") {
+      this._estimateTimer = window.setInterval(() => {
+        if (this._config && this._hass) this._render();
+      }, 10000);
+    }
     if (this._config) this._render();
   }
 
   disconnectedCallback() {
+    if (this._estimateTimer != null && typeof window !== "undefined" && typeof window.clearInterval === "function") {
+      window.clearInterval(this._estimateTimer);
+    }
+    this._estimateTimer = null;
     this._stopDiscAnimations();
   }
 
@@ -1485,20 +2257,38 @@ export class PowermeshMeterCard extends HTMLElement {
     return speed.reverse ? v : -v;
   }
 
-  _attachDiscAnimation(track, speed) {
+  _attachDiscAnimation(track, speed, canvas = null) {
     if (!track) return;
     if (!this._discAnimations) this._discAnimations = new Map();
     let anim = this._discAnimations.get(track);
     if (!anim) {
       anim = {
         track,
+        canvas,
         position: 0,
         currentVelocity: 0,
         targetVelocity: 0,
+        reverse: Boolean(speed?.reverse),
         lastTimestamp: 0,
         rafId: null,
+        resizeObserver: null,
       };
+      if (canvas && typeof ResizeObserver === "function") {
+        const ro = new ResizeObserver(() => {
+          drawFerrarisDiscCanvas(anim.canvas, anim.position, anim.currentVelocity, anim.reverse);
+        });
+        ro.observe(canvas);
+        anim.resizeObserver = ro;
+      }
       this._discAnimations.set(track, anim);
+    } else if (canvas) {
+      anim.canvas = canvas;
+    }
+    if (anim.canvas) {
+      drawFerrarisDiscCanvas(anim.canvas, anim.position, anim.currentVelocity, Boolean(speed?.reverse));
+      safeRaf(() => {
+        if (anim.canvas) drawFerrarisDiscCanvas(anim.canvas, anim.position, anim.currentVelocity, anim.reverse);
+      });
     }
     this._updateDiscAnimation(track, speed);
   }
@@ -1507,10 +2297,13 @@ export class PowermeshMeterCard extends HTMLElement {
     if (!this._discAnimations) return;
     const anim = this._discAnimations.get(track);
     if (!anim) return;
+    anim.reverse = Boolean(speed?.reverse);
     anim.targetVelocity = this._calcTargetVelocity(speed);
     if (anim.rafId == null && (anim.targetVelocity !== 0 || Math.abs(anim.currentVelocity) > 0.01)) {
       anim.lastTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
       anim.rafId = safeRaf((now) => this._stepDiscAnimation(anim, now));
+    } else if (anim.canvas) {
+      drawFerrarisDiscCanvas(anim.canvas, anim.position, anim.currentVelocity, anim.reverse);
     }
   }
 
@@ -1525,6 +2318,7 @@ export class PowermeshMeterCard extends HTMLElement {
     anim.currentVelocity = simulateDiscPhysics(anim.currentVelocity, anim.targetVelocity, dt, 1.8);
 
     if (anim.currentVelocity === 0 && anim.targetVelocity === 0) {
+      if (anim.canvas) drawFerrarisDiscCanvas(anim.canvas, anim.position, 0, anim.reverse);
       anim.rafId = null;
       return;
     }
@@ -1536,6 +2330,9 @@ export class PowermeshMeterCard extends HTMLElement {
     if (anim.track) {
       anim.track.style.transform = `translate3d(${anim.position.toFixed(2)}%, 0, 0)`;
     }
+    if (anim.canvas) {
+      drawFerrarisDiscCanvas(anim.canvas, anim.position, anim.currentVelocity, anim.reverse);
+    }
     anim.rafId = safeRaf((nextNow) => this._stepDiscAnimation(anim, nextNow));
   }
 
@@ -1545,6 +2342,10 @@ export class PowermeshMeterCard extends HTMLElement {
         if (anim.rafId != null) {
           safeCaf(anim.rafId);
           anim.rafId = null;
+        }
+        if (anim.resizeObserver) {
+          anim.resizeObserver.disconnect();
+          anim.resizeObserver = null;
         }
       }
       this._discAnimations.clear();
@@ -1556,31 +2357,78 @@ export class PowermeshMeterCard extends HTMLElement {
     for (const [track, anim] of this._discAnimations.entries()) {
       if (!this.shadowRoot.contains(track)) {
         if (anim.rafId != null) safeCaf(anim.rafId);
+        if (anim.resizeObserver) anim.resizeObserver.disconnect();
         this._discAnimations.delete(track);
       }
     }
   }
 
-  _derivePowerFromEnergy(entityId, currentVal, unit) {
-    if (currentVal == null || !Number.isFinite(currentVal)) return null;
-    if (!this._lastEnergy) this._lastEnergy = new Map();
-    const now = Date.now();
-    const prev = this._lastEnergy.get(entityId);
-    this._lastEnergy.set(entityId, { val: currentVal, time: now });
-    if (!prev) return null;
-    const dtSeconds = (now - prev.time) / 1000;
-    if (dtSeconds < 0.5 || dtSeconds > 3600) return null;
-    const delta = currentVal - prev.val;
-    if (delta <= 0) return 0;
-    const isKwh = unit === "kWh" || unit == null;
-    const isWh = unit === "Wh";
-    if (isKwh) {
-      return (delta * 1000 * 3600) / dtSeconds;
+  async _seedEnergyHistory(entityId, unit, stateClass) {
+    if (!entityId || typeof this._hass?.callWS !== "function") return;
+    if (!this._seededHistoryEntities) this._seededHistoryEntities = new Set();
+    if (!this._historyLoadingEntities) this._historyLoadingEntities = new Set();
+    if (this._seededHistoryEntities.has(entityId) || this._historyLoadingEntities.has(entityId)) return;
+
+    this._historyLoadingEntities.add(entityId);
+    const endMs = Date.now();
+    const startMs = endMs - FERRARIS_HISTORY_LOOKBACK_MS;
+    try {
+      const result = await this._hass.callWS({
+        type: "history/history_during_period",
+        start_time: new Date(startMs).toISOString(),
+        end_time: new Date(endMs).toISOString(),
+        entity_ids: [entityId],
+        minimal_response: true,
+        no_attributes: true,
+        significant_changes_only: false,
+      });
+      const entries = Array.isArray(result?.[entityId]) ? result[entityId] : [];
+      if (entries.length >= 2) {
+        const tempStore = new Map();
+        for (const entry of entries) {
+          const val = numericState(entry.s ?? entry.state);
+          const tsSec = Number(entry.lu ?? entry.lc ?? Date.parse(entry.last_updated ?? entry.last_changed) / 1000);
+          if (!Number.isFinite(val) || !Number.isFinite(tsSec)) continue;
+          const tsMs = tsSec * 1000;
+          estimatePowerFromEnergyChanges(tempStore, entityId, val, unit, {
+            sampleTimeMs: tsMs,
+            nowMs: tsMs,
+            stateClass,
+          });
+        }
+        const seeded = tempStore.get(entityId);
+        if (seeded && seeded.samples.length >= 2) {
+          if (!this._energyEstimator) this._energyEstimator = new Map();
+          const currentLive = this._energyEstimator.get(entityId);
+          if (!currentLive || currentLive.samples.length < 2) {
+            this._energyEstimator.set(entityId, seeded);
+          }
+        }
+      }
+    } catch {
+      // Recorder history is optional; live state changes continue to estimate power.
+    } finally {
+      this._historyLoadingEntities.delete(entityId);
+      this._seededHistoryEntities.add(entityId);
+      if (this._config && this._hass) this._render();
     }
-    if (isWh) {
-      return (delta * 3600) / dtSeconds;
+  }
+
+  _estimatePowerForItem(item, state, rawVal, unit) {
+    if (!item?.entity) return null;
+    if (isPowerSensor(state)) {
+      return extractWatts(state);
     }
-    return null;
+    if (!this._energyEstimator) this._energyEstimator = new Map();
+    const stateClass = state?.attributes?.state_class || null;
+    this._seedEnergyHistory(item.entity, unit, stateClass);
+    const rawStamp = Date.parse(state?.last_changed || state?.last_updated || "");
+    const sampleTimeMs = Number.isFinite(rawStamp) ? rawStamp : undefined;
+    return estimatePowerFromEnergyChanges(this._energyEstimator, item.entity, rawVal, unit, {
+      sampleTimeMs,
+      nowMs: Date.now(),
+      stateClass,
+    });
   }
 
   _render() {
@@ -1613,21 +2461,19 @@ export class PowermeshMeterCard extends HTMLElement {
       const digits = formatMeterDigits(rawVal, decimals, 6);
 
       let powerWatts = null;
-      let powerFromGrid = false;
-      if (item.disk_power_entity && this._hass?.states?.[item.disk_power_entity]) {
-        powerWatts = extractWatts(this._hass.states[item.disk_power_entity]);
+      let powerEstimated = false;
+      const hasExplicitPowerEntity = Boolean(item.disk_power_entity);
+      if (hasExplicitPowerEntity) {
+        if (this._hass?.states?.[item.disk_power_entity]) {
+          powerWatts = extractWatts(this._hass.states[item.disk_power_entity]);
+        }
       } else {
-        // Falls keine Entität für die Momentanleistung angegeben wurde, am Netzbezug orientieren
-        powerWatts = resolveGridImportPower(this._hass, item);
-        if (powerWatts == null) {
-          powerWatts = this._derivePowerFromEnergy(item.entity, rawVal, unit);
-        }
-        if (powerWatts != null) {
-          powerFromGrid = true;
-        }
+        powerWatts = this._estimatePowerForItem(item, state, rawVal, unit);
+        powerEstimated = !isPowerSensor(state);
       }
       const speed = ferrarisSpeed(powerWatts);
-      speed.powerFromGrid = powerFromGrid;
+      speed.estimated = powerEstimated;
+      speed.hasPowerValue = powerWatts != null;
 
       const existing = existingChildren[idx];
       if (
@@ -1635,15 +2481,17 @@ export class PowermeshMeterCard extends HTMLElement {
         existing &&
         existing.dataset?.style === "ferraris" &&
         existing.dataset?.entity === item.entity &&
+        existing.dataset?.decimals === String(decimals) &&
         digits &&
         existing.querySelectorAll(".ferraris-drum-ribbon").length === digits.digits.length
       ) {
-        return this._updateFerraris(existing, item, name, state, digits, speed, unit);
+        return this._updateFerraris(existing, item, name, state, digits, speed, unit, rawVal, decimals);
       }
 
       let section;
       if (style === "ferraris") {
-        section = this._renderFerraris(item, name, state, digits, speed, unit);
+        section = this._renderFerraris(item, name, state, digits, speed, unit, rawVal, decimals);
+        section.dataset.decimals = String(decimals);
       } else if (style === "ebz") {
         section = this._renderEbz(item, name, state, digits, speed, unit);
       } else if (style === "emh") {
@@ -1671,8 +2519,8 @@ export class PowermeshMeterCard extends HTMLElement {
     });
 
     if (sections.some((s, i) => s !== existingChildren[i]) || sections.length !== existingChildren.length) {
-      this._cleanupOrphanedDiscAnimations();
       body.replaceChildren(...sections);
+      this._cleanupOrphanedDiscAnimations();
     }
   }
 
@@ -1681,7 +2529,8 @@ export class PowermeshMeterCard extends HTMLElement {
     const header = el("div", "modern-header");
     header.append(el("span", null, name));
     if (speed.active) {
-      const pText = `${speed.power < 0 ? "🌿 " : "⚡ "}${Math.abs(Math.round(speed.power))} W`;
+      const approx = speed.estimated ? "~ " : "";
+      const pText = `${speed.power < 0 ? "🌿 " : "⚡ "}${approx}${Math.abs(Math.round(speed.power))} W`;
       const pBadge = el("span", `modern-power-badge${speed.power < 0 ? " export" : ""}`, pText);
       header.append(pBadge);
     }
@@ -1694,65 +2543,163 @@ export class PowermeshMeterCard extends HTMLElement {
     card.append(header, display, meta);
     return card;
   }
-  _renderFerraris(item, name, state, digits, speed, unit) {
+
+  _formatFerrarisPowerInfo(item, speed) {
+    const isExport = speed.active && speed.power < 0;
+    const absW = Math.abs(Math.round(speed.power || 0));
+    if (item.disk_power_entity) {
+      const text = !speed.active
+        ? "0 W · Stillstand"
+        : isExport
+          ? `–${absW} W · Rücklauf`
+          : `${absW} W`;
+      return { text, isExport, estimated: false };
+    }
+    if (speed.active) {
+      const text = isExport
+        ? `~ –${absW} W · geschätzt`
+        : `~ ${absW} W · geschätzt`;
+      return { text, isExport, estimated: true };
+    }
+    return {
+      text: speed.hasPowerValue ? "~ 0 W · Stillstand" : "0 W · Stillstand",
+      isExport: false,
+      estimated: true,
+    };
+  }
+
+  _renderFerraris(item, name, state, digits, speed, unit, rawVal, decimals) {
     const animate = item.animate_digits ?? this._config.animate_digits ?? true;
     const card = el("div", "style-ferraris");
+    const bezel = el("div", "ferraris-bezel");
+    const faceplate = el("div", "ferraris-faceplate");
+    faceplate.append(el("div", "ferraris-glass-reflection"));
 
-    const screws = el("div", "ferraris-screws");
-    ["tl", "tr", "bl", "br"].forEach((pos) => screws.append(el("div", `screw ${pos}`)));
-
-    const plate = el("div", "ferraris-plate");
-    plate.append(
-      el("div", "ferraris-brand", "POWERMESH · WECHSELSTROMZÄHLER"),
-      el("div", "ferraris-type", name),
-      el("div", "ferraris-specs", "10(40) A · 230 V · 50 Hz · 375 U/kWh")
+    // 1. Register row: Schutzklasse II & double-circle marks | Odometer + keeper tab | Unit (kWh)
+    const registerRow = el("div", "ferraris-register-row");
+    const safetyMarks = createFerrarisSvg(
+      "0 0 20 42",
+      `<rect x="2" y="1.5" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"/>` +
+      `<rect x="5.5" y="5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.4"/>` +
+      `<circle cx="10" cy="31" r="7.5" fill="none" stroke="currentColor" stroke-width="1.4"/>` +
+      `<circle cx="10" cy="31" r="4.6" fill="none" stroke="currentColor" stroke-width="1.3"/>`,
+      "ferraris-safety-marks"
     );
 
+    const registerCol = el("div", "ferraris-register-col");
     const odoHousing = el("div", "ferraris-odometer-housing");
-    const drums = el("div", "ferraris-drums");
+    const drumPositions = computeFerrarisDrumPositions(rawVal, decimals, 6);
+
+    const makeDrumNode = (d, idx, pos) => {
+      const drum = el("div", `ferraris-drum ${d.isRed ? "decimal" : "integer"}`);
+      drum.dataset.drumIndex = String(idx);
+      const num = Number(d.char);
+      if (Number.isInteger(num) && num >= 0 && num <= 9 && pos != null) {
+        const ribbon = el("div", `ferraris-drum-ribbon${animate ? " animated" : ""}`);
+        ribbon.dataset.current = String(Math.floor(pos + 1e-6) % 10);
+        ribbon.dataset.pos = String(pos);
+        ribbon.append(el("div", "ferraris-digit-cell", "9"));
+        for (let digit = 0; digit <= 9; digit++) {
+          ribbon.append(el("div", "ferraris-digit-cell", String(digit)));
+        }
+        ribbon.append(el("div", "ferraris-digit-cell", "0"));
+        ribbon.append(el("div", "ferraris-digit-cell", "1"));
+        ribbon.style.transform = `translateY(calc(${-pos} * var(--drum-step, 24px)))`;
+        drum.append(ribbon);
+      } else {
+        drum.append(el("div", "ferraris-digit-cell", d.char));
+      }
+      drum.append(el("div", "ferraris-drum-shade"));
+      return drum;
+    };
+
     if (digits) {
-      digits.digits.forEach((d, idx) => {
-        if (d.role === "decimal" && d === digits.digits.find((x) => x.role === "decimal")) {
-          drums.append(el("span", "ferraris-separator", ","));
-        }
-        const drum = el("div", `ferraris-drum ${d.isRed ? "decimal" : "integer"}`);
-        drum.dataset.drumIndex = String(idx);
-        const num = Number(d.char);
-        if (Number.isInteger(num) && num >= 0 && num <= 9) {
-          const ribbon = el("div", `ferraris-drum-ribbon${animate ? " animated" : ""}`);
-          ribbon.dataset.current = String(num);
-          for (let digit = 0; digit <= 9; digit++) {
-            ribbon.append(el("div", "ferraris-digit-cell", String(digit)));
-          }
-          ribbon.append(el("div", "ferraris-digit-cell", "0"));
-          const progress = d.progress || 0;
-          ribbon.style.transform = `translateY(-${(num + progress) * 34}px)`;
-          drum.append(ribbon);
-        } else {
-          drum.append(el("div", "ferraris-digit-cell", d.char));
-        }
-        drum.append(el("div", "ferraris-drum-shade"));
-        drums.append(drum);
+      const intList = digits.digits.filter((d) => d.role !== "decimal");
+      const decList = digits.digits.filter((d) => d.role === "decimal");
+
+      const intWrap = el("div", `ferraris-drums-int-wrap${decList.length === 0 ? " all-integer" : ""}`);
+      const intDrums = el("div", "ferraris-drums");
+      intList.forEach((d, i) => {
+        const pos = drumPositions ? drumPositions[i] : Number(d.char);
+        intDrums.append(makeDrumNode(d, i, pos));
       });
+      intWrap.append(intDrums);
+      odoHousing.append(intWrap);
+
+      if (decList.length > 0) {
+        const decWrap = el("div", "ferraris-drums-dec-wrap");
+        decWrap.append(el("span", "ferraris-comma-wedge"));
+        const decDrums = el("div", "ferraris-drums");
+        decList.forEach((d, j) => {
+          const idx = intList.length + j;
+          const pos = drumPositions ? drumPositions[idx] : Number(d.char);
+          decDrums.append(makeDrumNode(d, idx, pos));
+        });
+        decWrap.append(decDrums);
+        odoHousing.append(decWrap);
+      }
     } else {
+      const intWrap = el("div", "ferraris-drums-int-wrap all-integer");
+      const intDrums = el("div", "ferraris-drums");
       for (let i = 0; i < 6; i++) {
         const drum = el("div", "ferraris-drum integer");
-        drum.append(el("div", "ferraris-digit-cell", "–"));
-        drum.append(el("div", "ferraris-drum-shade"));
-        drums.append(drum);
+        drum.append(el("div", "ferraris-digit-cell", "–"), el("div", "ferraris-drum-shade"));
+        intDrums.append(drum);
       }
+      intWrap.append(intDrums);
+      odoHousing.append(intWrap);
     }
-    odoHousing.append(drums, el("span", "ferraris-unit-tag", unit));
+
+    registerCol.append(odoHousing, el("div", "ferraris-keeper-tab"));
+    registerRow.append(safetyMarks, registerCol, el("span", "ferraris-unit-tag", unit));
+
+    // 2. Nameplate: Brand + Designation + PTB box, divider line, technical ratings
+    const nameplate = el("div", "ferraris-nameplate");
+    const brandRow = el("div", "ferraris-brand-row");
+    const ptbBox = el("div", "ferraris-ptb-box");
+    ptbBox.append(el("div", null, "20.14"), el("div", null, "79.02"));
+    brandRow.append(
+      el("span", "ferraris-brand", "Powermesh"),
+      el("span", "ferraris-designation", name),
+      ptbBox
+    );
+
+    const specsRow = el("div", "ferraris-specs-row");
+    specsRow.append(
+      el("span", null, "Type E72F"),
+      el("span", null, "230 V"),
+      el("span", "ferraris-amp-badge", "10(40)A"),
+      el("span", null, "50 Hz")
+    );
+    nameplate.append(brandRow, el("div", "ferraris-rule"), specsRow);
+
+    // 3. Rotor disc window flanked by classic fletched rotation arrow + center index mark
+    const rotorSection = el("div", "ferraris-rotor-section");
+    const rotorRow = el("div", "ferraris-rotor-row");
+    const leftArrow = createFerrarisSvg(
+      "0 0 68 14",
+      `<polygon points="2,2 22,2 27,7 22,12 2,12 7,7" fill="currentColor"/>` +
+      `<line x1="25" y1="7" x2="68" y2="7" stroke="currentColor" stroke-width="2"/>`,
+      "ferraris-arrow left"
+    );
+    const rightArrow = createFerrarisSvg(
+      "0 0 68 14",
+      `<line x1="0" y1="7" x2="45" y2="7" stroke="currentColor" stroke-width="2"/>` +
+      `<polygon points="41,2 66,7 41,12 45,7" fill="currentColor"/>`,
+      "ferraris-arrow right"
+    );
 
     const chamber = el("div", `ferraris-chamber${speed.reverse ? " solar-export" : ""}`);
     const win = el("div", "ferraris-window");
-    win.append(el("div", "ferraris-window-glass"));
+    const canvas = el("canvas", "ferraris-disc-canvas");
+    canvas.setAttribute("width", "240");
+    canvas.setAttribute("height", "13");
+    win.append(canvas, el("div", "ferraris-window-glass"));
 
     const track = el("div", "ferraris-disc-track");
     track.style.setProperty("--disc-duration", `${speed.duration}s`);
     track.style.setProperty("--disc-direction", speed.reverse ? "reverse" : "normal");
     track.style.setProperty("--disc-play-state", speed.active ? "running" : "paused");
-
     const half1 = el("div", "ferraris-disc-half");
     half1.append(el("div", "ferraris-mark"));
     const half2 = el("div", "ferraris-disc-half");
@@ -1761,51 +2708,95 @@ export class PowermeshMeterCard extends HTMLElement {
     win.append(track);
     chamber.append(win);
 
-    const showPowerBadge = Boolean(item.disk_power_entity || (speed.powerFromGrid && speed.active));
-    if (showPowerBadge) {
-      const label = speed.powerFromGrid ? "Netzbezug" : "Bezug";
-      const powerText = !speed.active
-        ? "0 W · Stillstand"
-        : speed.power < 0
-          ? `🌿 –${Math.abs(Math.round(speed.power))} W (Einspeisung)`
-          : `⚡ ${Math.round(speed.power)} W (${label})`;
-      const info = el("div", `ferraris-power-info${speed.power < 0 ? " export" : ""}`, powerText);
-      chamber.append(info);
-    }
+    rotorRow.append(leftArrow, chamber, rightArrow);
+    rotorSection.append(rotorRow, el("div", "ferraris-center-tick"));
 
-    card.append(screws, plate, odoHousing, chamber);
-    this._attachDiscAnimation(track, speed);
+    // 4. Bottom row: Serial number + meter constant on left, power info + WEEE/CE marks on right
+    const bottomRow = el("div", "ferraris-bottom-row");
+    const serialCol = el("div", "ferraris-serial-col");
+    const nrLine = el("div", "ferraris-nr-line");
+    nrLine.append(el("span", null, "Nr."), el("span", "ferraris-nr-plate", ferrarisSerialNumber(item.entity || name)));
+    serialCol.append(
+      nrLine,
+      el("div", null, "375 U/kWh"),
+      el("div", null, "Schltg. 1000")
+    );
+
+    const rightCol = el("div", "ferraris-right-col");
+    const powerInfo = this._formatFerrarisPowerInfo(item, speed);
+    const powerClasses = [
+      "ferraris-power-info",
+      powerInfo.isExport ? "export" : "",
+      powerInfo.estimated ? "estimated" : "",
+    ].filter(Boolean).join(" ");
+    rightCol.append(el("div", powerClasses, powerInfo.text));
+
+    const compliance = el("div", "ferraris-compliance");
+    const weeeBadge = createFerrarisSvg(
+      "0 0 22 24",
+      `<line x1="2" y1="2" x2="20" y2="20" stroke="currentColor" stroke-width="1.3"/>` +
+      `<line x1="20" y1="2" x2="2" y2="20" stroke="currentColor" stroke-width="1.3"/>` +
+      `<path d="M6.5 6.5 H15.5 L14.5 17.5 H7.5 Z" fill="none" stroke="currentColor" stroke-width="1.3"/>` +
+      `<path d="M5.5 6.5 Q11 4.2 16.5 6.5" fill="none" stroke="currentColor" stroke-width="1.3"/>` +
+      `<circle cx="14.2" cy="17.5" r="1.5" fill="currentColor"/>` +
+      `<rect x="5" y="21" width="12" height="2.2" fill="currentColor"/>`,
+      "ferraris-sticker-badge"
+    );
+    const ceBadge = createFerrarisSvg(
+      "0 0 30 20",
+      `<path d="M12.5 4.2 A6 6 0 1 0 12.5 15.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="butt"/>` +
+      `<path d="M26.5 4.2 A6 6 0 1 0 26.5 15.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="butt"/>` +
+      `<line x1="20.2" y1="10" x2="25.2" y2="10" stroke="currentColor" stroke-width="2.1"/>`,
+      "ferraris-sticker-badge"
+    );
+    compliance.append(weeeBadge, ceBadge);
+    rightCol.append(compliance);
+
+    bottomRow.append(serialCol, rightCol);
+
+    faceplate.append(registerRow, nameplate, rotorSection, bottomRow);
+    bezel.append(faceplate);
+    card.append(bezel);
+    this._attachDiscAnimation(track, speed, canvas);
     return card;
   }
 
-  _updateFerraris(existingCard, item, name, state, digits, speed, unit) {
+  _updateFerraris(existingCard, item, name, state, digits, speed, unit, rawVal, decimals) {
     const animate = item.animate_digits ?? this._config.animate_digits ?? true;
+    const desigEl = existingCard.querySelector(".ferraris-designation");
+    if (desigEl && desigEl.textContent !== name) desigEl.textContent = name;
+    const unitEl = existingCard.querySelector(".ferraris-unit-tag");
+    if (unitEl && unitEl.textContent !== unit) unitEl.textContent = unit;
+
     if (digits) {
       const drums = existingCard.querySelectorAll(".ferraris-drum");
+      const drumPositions = computeFerrarisDrumPositions(rawVal, decimals, 6);
       digits.digits.forEach((d, idx) => {
         const drum = drums[idx];
         if (!drum) return;
         const ribbon = drum.querySelector(".ferraris-drum-ribbon");
-        const num = Number(d.char);
-        if (ribbon && Number.isInteger(num)) {
-          const oldVal = Number(ribbon.dataset.current ?? 0);
-          if (oldVal !== num) {
-            ribbon.dataset.current = String(num);
-            const progress = d.progress || 0;
+        const pos = drumPositions ? drumPositions[idx] : Number(d.char);
+        if (ribbon && Number.isFinite(pos)) {
+          const prevPos = Number(ribbon.dataset.pos ?? pos);
+          if (Math.abs(prevPos - pos) >= 0.002) {
+            const oldBase = Math.floor(prevPos + 1e-6) % 10;
+            const newBase = Math.floor(pos + 1e-6) % 10;
+            ribbon.dataset.current = String(newBase);
+            ribbon.dataset.pos = String(pos);
             if (animate) {
               ribbon.classList.add("animated");
-              if (oldVal === 9 && num === 0) {
-                ribbon.style.transform = `translateY(-${(10 + progress) * 34}px)`;
+              if (oldBase === 9 && newBase === 0 && pos < 1) {
+                ribbon.style.transform = `translateY(calc(${-(10 + pos)} * var(--drum-step, 24px)))`;
                 ribbon.addEventListener("transitionend", () => {
                   ribbon.classList.remove("animated");
-                  ribbon.style.transform = `translateY(-${progress * 34}px)`;
+                  ribbon.style.transform = `translateY(calc(${-pos} * var(--drum-step, 24px)))`;
                 }, { once: true });
               } else {
-                ribbon.style.transform = `translateY(-${(num + progress) * 34}px)`;
+                ribbon.style.transform = `translateY(calc(${-pos} * var(--drum-step, 24px)))`;
               }
             } else {
               ribbon.classList.remove("animated");
-              ribbon.style.transform = `translateY(-${(num + progress) * 34}px)`;
+              ribbon.style.transform = `translateY(calc(${-pos} * var(--drum-step, 24px)))`;
             }
           }
         }
@@ -1817,29 +2808,21 @@ export class PowermeshMeterCard extends HTMLElement {
       track.style.setProperty("--disc-duration", `${speed.duration}s`);
       track.style.setProperty("--disc-direction", speed.reverse ? "reverse" : "normal");
       track.style.setProperty("--disc-play-state", speed.active ? "running" : "paused");
-      this._updateDiscAnimation(track, speed);
+      this._attachDiscAnimation(track, speed, existingCard.querySelector(".ferraris-disc-canvas"));
     }
     const chamber = existingCard.querySelector(".ferraris-chamber");
     if (chamber) {
       chamber.classList.toggle("solar-export", speed.reverse);
-      const info = chamber.querySelector(".ferraris-power-info");
-      const showPowerBadge = Boolean(item.disk_power_entity || (speed.powerFromGrid && speed.active));
-      if (showPowerBadge) {
-        const label = speed.powerFromGrid ? "Netzbezug" : "Bezug";
-        const powerText = !speed.active
-          ? "0 W · Stillstand"
-          : speed.power < 0
-            ? `🌿 –${Math.abs(Math.round(speed.power))} W (Einspeisung)`
-            : `⚡ ${Math.round(speed.power)} W (${label})`;
-        if (info) {
-          info.textContent = powerText;
-          info.className = `ferraris-power-info${speed.power < 0 ? " export" : ""}`;
-        } else {
-          chamber.append(el("div", `ferraris-power-info${speed.power < 0 ? " export" : ""}`, powerText));
-        }
-      } else if (info) {
-        info.remove();
-      }
+    }
+    const info = existingCard.querySelector(".ferraris-power-info");
+    if (info) {
+      const powerInfo = this._formatFerrarisPowerInfo(item, speed);
+      info.textContent = powerInfo.text;
+      info.className = [
+        "ferraris-power-info",
+        powerInfo.isExport ? "export" : "",
+        powerInfo.estimated ? "estimated" : "",
+      ].filter(Boolean).join(" ");
     }
     return existingCard;
   }
@@ -1861,9 +2844,10 @@ export class PowermeshMeterCard extends HTMLElement {
 
     const bottom = el("div", "ebz-lcd-bottom");
     bottom.append(el("span", "ebz-phases", "L1 L2 L3"));
-    if (item.disk_power_entity || speed.powerFromGrid) {
+    if (item.disk_power_entity || speed.hasPowerValue) {
+      const approx = speed.estimated ? "~" : "";
       const pText = speed.active
-        ? `${speed.power < 0 ? "-A " : "+A "}${Math.abs(Math.round(speed.power))} W`
+        ? `${speed.power < 0 ? "-A " : "+A "}${approx}${Math.abs(Math.round(speed.power))} W`
         : "0 W";
       bottom.append(el("span", `ebz-power${speed.power < 0 ? " export" : ""}`, pText));
     } else {
@@ -1900,9 +2884,10 @@ export class PowermeshMeterCard extends HTMLElement {
 
     const bottom = el("div", "emh-lcd-bottom");
     bottom.append(el("span", null, "L1 L2 L3"));
-    if (item.disk_power_entity || speed.powerFromGrid) {
+    if (item.disk_power_entity || speed.hasPowerValue) {
+      const approx = speed.estimated ? "~" : "";
       const pText = speed.active
-        ? `${speed.power < 0 ? "◀ -P " : "▶ +P "}${Math.abs(Math.round(speed.power))} W`
+        ? `${speed.power < 0 ? "◀ -P " : "▶ +P "}${approx}${Math.abs(Math.round(speed.power))} W`
         : "P = 0 W";
       bottom.append(el("span", `emh-power${speed.power < 0 ? " export" : ""}`, pText));
     } else {
@@ -2022,7 +3007,7 @@ export class PowermeshMeterCardEditor extends HTMLElement {
       entity: "Zähler-Sensor (z. B. Netzbezug, Solarerzeugung)",
       name: "Bezeichnung / Name",
       style: "Visualisierungs-Stil",
-      disk_power_entity: "Momentanleistung für Drehscheibe (optional, Standard: Netzbezug)",
+      disk_power_entity: "Momentanleistung für Drehscheibe (optional, sonst aus Zähleränderung geschätzt)",
       decimals: "Nachkommastellen (Standard: 1)",
       animate_digits: "Zahlenwechsel animieren (Rollenzählwerk)",
     })[name] || name;

@@ -7,7 +7,7 @@ from typing import Final
 
 DOMAIN: Final = "powermesh_energy"
 # Keep in sync with manifest.json.
-VERSION: Final = "0.9.6"
+VERSION: Final = "0.9.7"
 # The powermesh.de REST transfer stays in the code base but is not offered or started.
 CLOUD_TRANSFER_ENABLED: Final = False
 API_RELEASE: Final = "0.4.1"

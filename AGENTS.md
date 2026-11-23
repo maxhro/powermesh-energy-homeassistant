@@ -2,7 +2,7 @@
 
 ## Current baseline
 
-- Version `0.9.6` prototype: local anomaly monitoring (`monitor.py`,
+- Version `0.9.7` prototype: local anomaly monitoring (`monitor.py`,
   `monitor_flow.py`), local energy overview and the multi-style Powermesh Zähler
   meter card (`powermesh-meter-card`). Owner-confirmed sensors (max 50) suggested
   from areas, labels and devices: learned EWMA normal range for
@@ -13,7 +13,10 @@
   battery percentage averages and combined signed grid/battery power. Anomaly-history
   charts use display-only time-weighted smoothing. The meter card visualizes
   meter readings in six styles (retro Ferraris with spinning disc, EBZ, EMH,
-  modern, nixie, and 80s VFD). Bounded learning state
+  modern, nixie, and 80s VFD). Ferraris uses an aluminium faceplate and a
+  perspective-rendered disc; without an explicit power entity, speed is estimated
+  from the meter's own changes, seeded once from local Recorder history.
+  Bounded learning state
   stays in private HA storage and is removed with the entry. No AI, no cloud,
   no control, no savings promises.
 - The powermesh.de REST transfer is disabled via

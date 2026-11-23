@@ -202,16 +202,18 @@ smoothing_minutes: 5
 (z. B. Netzbezug, Netzeinspeisung, Solarerzeugung, Wärmepumpe oder Wallbox) in
 sechs frei wählbaren Stilen und ist im Dashboard-Designer interaktiv konfigurierbar:
 
-- **Retro Ferraris (Mechanisches Rollenzählwerk & Drehscheibe):** Schwarzes
-  Bakelit-Gehäuse mit Glasspiegelung, rotierendes Rollenzählwerk mit roter Walze
-  für die Nachkommastelle mit flüssigem mechanischem Zahlenübergang (Mechanical Carry-Over)
-  sowie horizontal rotierende Aluminium-Drehscheibe mit
-  roter Eichmarkierung. Die Drehgeschwindigkeit koppelt an die Momentanleistung
-  (`disk_power_entity`, orientiert sich ohne Angabe automatisch am Netzbezug).
-  Physikalische Trägheit lässt den Rotor wie ein echtes mechanisches Bauteil
-  sanft beschleunigen und auslaufen; bei Überschuss/Einspeisung dreht sich die Scheibe
-  rückwärts und leuchtet smaragdgrün auf. Der Zahlenwechsel der Walzen lässt
-  sich optional per `animate_digits: true / false` steuern.
+- **Retro Ferraris (Mechanisches Rollenzählwerk & Drehscheibe):** Klassisches
+  schwarzes Bakelit-Gehäuse mit silberfarbenem Aluminium-Typenschild hinter
+  Glas, schwarzen Ziffernwalzen mit roter Nachkomma-Umrandung und flüssigem
+  mechanischem Zahlenübergang (Mechanical Carry-Over) sowie dreidimensional
+  gerändelter Aluminium-Läuferscheibe mit roter Eichmarke und Drehrichtungspfeil.
+  Die Drehgeschwindigkeit koppelt an die Momentanleistung (`disk_power_entity`);
+  wird keine eigene Leistungsentität angegeben, schätzt die Karte die aktuelle
+  Leistung automatisch anhand der Zählerstandsänderungen (inkl. Initialisierung
+  aus der lokalen HA-Historie). Physikalische Trägheit lässt den Rotor wie ein
+  echtes mechanisches Bauteil sanft beschleunigen und auslaufen; bei
+  Überschuss/Einspeisung läuft die Scheibe rückwärts. Der Zahlenwechsel der
+  Walzen lässt sich optional per `animate_digits: true / false` steuern.
 - **EBZ Digitalzähler (mMe / DD3):** Authentischer digitaler Haushaltszähler
   (moderne Messeinrichtung) im typischen Industrie-Kunststoffgehäuse mit
   grün-grauem LCD-Display, OBIS-Kennziffern (`1.8.0` Bezug / `2.8.0` Einspeisung),
@@ -234,7 +236,7 @@ type: custom:powermesh-meter-card
 entity: sensor.stromzaehler_bezug
 name: Netzbezug
 style: ferraris
-disk_power_entity: sensor.aktuelle_leistung # optional: Momentanleistung (Standard: autom. Netzbezug)
+disk_power_entity: sensor.aktuelle_leistung # optional: Momentanleistung (sonst aus Zähleränderung geschätzt)
 decimals: 1
 animate_digits: true # optional: Mechanischen Zahlenwechsel animieren (Standard: true)
 show_header: true # optional: false blendet den Kopfbereich aus (Zähler rückt platzsparend nach oben)
@@ -280,7 +282,7 @@ Version installieren und Home Assistant danach neu starten.
 
 ## Versionen
 
-Diese Integration ist ein Prototyp in Version **0.9.6**. Sie wird unabhängig von
+Diese Integration ist ein Prototyp in Version **0.9.7**. Sie wird unabhängig von
 der Website powermesh.de versioniert und benötigt keinen Dienst.
 
 ## Lokale Tests
@@ -294,7 +296,7 @@ pwsh -NoProfile -File ./build-package.ps1 -DryRun
 pwsh -NoProfile -File ./build-package.ps1 -BuildPackage
 ```
 
-Das Archiv `dist/powermesh-energy-homeassistant-0.9.6.zip` enthält
+Das Archiv `dist/powermesh-energy-homeassistant-0.9.7.zip` enthält
 `custom_components/powermesh_energy` und die Lizenz, keine Testumgebung, Caches
 oder Zugangsdaten. Vorhandene Archive werden nicht überschrieben.
 Den enthaltenen Komponentenordner in das Konfigurationsverzeichnis von

@@ -15,8 +15,8 @@ function fixture(t) {
   t.after(() => rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   copyFileSync(join(root, 'build-package.ps1'), join(work, 'build-package.ps1'));
   for (const [name, content] of Object.entries({
-    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.6"}',
-    [`${component}/const.py`]: 'VERSION: Final = "0.9.6"\n',
+    [`${component}/manifest.json`]: '{"domain":"powermesh_energy","version":"0.9.7"}',
+    [`${component}/const.py`]: 'VERSION: Final = "0.9.7"\n',
     [`${component}/__init__.py`]: '',
     [`${component}/translations/de.json`]: '{}',
     [`${component}/frontend/powermesh-energy-card.js`]: 'export const synthetic = true;',
@@ -60,7 +60,7 @@ test('manual-install ZIP includes exactly component sources and license without 
   assert.equal(existsSync(join(work, 'dist')), false);
   const built = run(work, '-BuildPackage');
   assert.equal(built.status, 0, built.stderr);
-  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.6.zip');
+  const path = join(work, 'dist/powermesh-energy-homeassistant-0.9.7.zip');
   assert.deepEqual(zipNames(path), [
     `${component}/__init__.py`, `${component}/const.py`, `${component}/frontend/powermesh-energy-card.js`, `${component}/manifest.json`,
     `${component}/translations/de.json`, 'LICENSE',
@@ -74,7 +74,7 @@ test('version drift, JSON secret files and links are rejected before output', (t
   const work = fixture(t);
   writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "1.0.0"\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
-  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.6"\n');
+  writeFileSync(join(work, component, 'const.py'), 'VERSION: Final = "0.9.7"\n');
   const yaml = join(work, component, 'secrets.yaml');
   writeFileSync(yaml, 'token: SYNTHETIC_NEVER\n');
   assert.notEqual(run(work, '-BuildPackage').status, 0);
@@ -103,6 +103,8 @@ const {
   VFD_SEGMENTS, renderVfdDigitSvg, PowermeshMeterCard, PowermeshMeterCardEditor,
   PowermeshEnergyCard, PowermeshAnomalyCard,
   resolveGridImportPower, simulateDiscPhysics, extractWatts, isPowerSensor,
+  estimatePowerFromEnergyChanges, computeFerrarisDrumPositions, ferrarisSerialNumber,
+  drawFerrarisDiscCanvas,
 } = await import(`data:text/javascript;base64,${Buffer.from(cardSource).toString('base64')}`);
 const now = Date.parse('2026-11-05T12:00:00Z');
 const source = (value, unit = 'W', stamp = '2026-11-05T12:00:00Z') => ({
@@ -504,4 +506,206 @@ test('powermesh-meter-card manages realistic disc inertia lifecycle and target v
   card._discAnimations.set('fakeTrack', { rafId: 123 });
   card.disconnectedCallback();
   assert.equal(card._discAnimations.size, 0);
+});
+
+test('meter rendering keeps new disc animations and cleans only removed tracks', () => {
+  const card = Object.create(PowermeshMeterCard.prototype);
+  const oldTrack = {};
+  const newTrack = {};
+  const oldSection = { dataset: { style: 'modern' }, track: oldTrack };
+  const newSection = { dataset: {}, track: newTrack, addEventListener() {} };
+  const body = {
+    children: [oldSection],
+    replaceChildren(...sections) { this.children = sections; },
+  };
+  let removedObserverDisconnected = false;
+  const retainedObserver = { disconnect() { assert.fail('New disc observer must remain attached'); } };
+  card._discAnimations = new Map([
+    [oldTrack, { resizeObserver: { disconnect() { removedObserverDisconnected = true; } } }],
+  ]);
+  card._config = { entity: 'sensor.meter', style: 'ferraris' };
+  card._hass = { states: { 'sensor.meter': source('100', 'kWh') } };
+  card.shadowRoot = {
+    querySelector(selector) { return selector === '.meters-body' ? body : null; },
+    contains(track) { return body.children.some((section) => section.track === track); },
+  };
+  card._estimatePowerForItem = () => null;
+  card._renderFerraris = () => {
+    card._discAnimations.set(newTrack, { resizeObserver: retainedObserver });
+    return newSection;
+  };
+
+  card._render();
+
+  assert.deepEqual(body.children, [newSection]);
+  assert.equal(card._discAnimations.has(newTrack), true);
+  assert.equal(card._discAnimations.has(oldTrack), false);
+  assert.equal(removedObserverDisconnected, true);
+});
+
+test('Ferraris updates restore disc animation state after reconnecting', () => {
+  const card = Object.create(PowermeshMeterCard.prototype);
+  const track = { style: { setProperty() {} } };
+  const section = {
+    querySelector(selector) { return selector === '.ferraris-disc-track' ? track : null; },
+  };
+  card._config = {};
+  card._discAnimations = new Map([[track, { rafId: null }]]);
+  card.disconnectedCallback();
+  assert.equal(card._discAnimations.size, 0);
+
+  card._updateFerraris(section, {}, 'Zähler', null, null, ferrarisSpeed(0), 'kWh', 0, 1);
+
+  assert.equal(card._discAnimations.has(track), true);
+  assert.equal(card._discAnimations.get(track).targetVelocity, 0);
+  card.disconnectedCallback();
+});
+
+test('estimatePowerFromEnergyChanges estimates power from reading deltas, ignores unchanged renders and decays smoothly', () => {
+  const store = new Map();
+  const base = Date.parse('2026-11-23T12:00:00Z');
+
+  // First reading records anchor without fabricating power
+  assert.equal(estimatePowerFromEnergyChanges(store, 'sensor.house_kwh', 100.00, 'kWh', {
+    sampleTimeMs: base,
+    nowMs: base,
+    stateClass: 'total_increasing',
+  }), null);
+
+  // Unrelated HA updates with identical reading do not clobber anchor timestamp
+  assert.equal(estimatePowerFromEnergyChanges(store, 'sensor.house_kwh', 100.00, 'kWh', {
+    sampleTimeMs: base,
+    nowMs: base + 1000,
+    stateClass: 'total_increasing',
+  }), null);
+
+  // +0.01 kWh (+10 Wh) after 30s => 1200 W
+  const watts = estimatePowerFromEnergyChanges(store, 'sensor.house_kwh', 100.01, 'kWh', {
+    sampleTimeMs: base + 30_000,
+    nowMs: base + 30_000,
+    stateClass: 'total_increasing',
+  });
+  assert.ok(Math.abs(watts - 1200) < 0.01, `Expected 1200 W, got ${watts}`);
+
+  // Subsequent HA renders 5s later with unchanged reading preserve 1200 W instead of dropping to 0
+  const held = estimatePowerFromEnergyChanges(store, 'sensor.house_kwh', 100.01, 'kWh', {
+    sampleTimeMs: base + 30_000,
+    nowMs: base + 35_000,
+    stateClass: 'total_increasing',
+  });
+  assert.ok(Math.abs(held - 1200) < 0.01, `Expected held 1200 W, got ${held}`);
+
+  // After 90s without further change (2x the 45s hold window), decays smoothly to ~600 W
+  const decayed = estimatePowerFromEnergyChanges(store, 'sensor.house_kwh', 100.01, 'kWh', {
+    sampleTimeMs: base + 30_000,
+    nowMs: base + 30_000 + 90_000,
+    stateClass: 'total_increasing',
+  });
+  assert.ok(Math.abs(decayed - 600) < 1, `Expected ~600 W after decay, got ${decayed}`);
+
+  // Over 1 hour with no change settles at 0 W
+  const settled = estimatePowerFromEnergyChanges(store, 'sensor.house_kwh', 100.01, 'kWh', {
+    sampleTimeMs: base + 30_000,
+    nowMs: base + 30_000 + 3700_000,
+    stateClass: 'total_increasing',
+  });
+  assert.equal(settled, 0);
+
+  // Counter reset on total_increasing re-anchors to 0 without negative spike
+  const reset = estimatePowerFromEnergyChanges(store, 'sensor.house_kwh', 0.02, 'kWh', {
+    sampleTimeMs: base + 3750_000,
+    nowMs: base + 3750_000,
+    stateClass: 'total_increasing',
+  });
+  assert.equal(reset, 0);
+});
+
+test('powermesh-meter-card estimates power from meter changes and seeds from history when disk_power_entity is omitted', async () => {
+  const card = Object.create(PowermeshMeterCard.prototype);
+  card._energyEstimator = new Map();
+  card._seededHistoryEntities = new Set();
+  card._historyLoadingEntities = new Set();
+  card._config = { entity: 'sensor.heating_kwh', style: 'ferraris' };
+
+  const nowMs = Date.now();
+  const t0 = nowMs - 120_000;
+  const t1 = nowMs - 60_000;
+  let wsCalled = false;
+  card._hass = {
+    states: {
+      'sensor.heating_kwh': {
+        entity_id: 'sensor.heating_kwh',
+        state: '12.02',
+        attributes: { unit_of_measurement: 'kWh', state_class: 'total_increasing' },
+        last_changed: new Date(t1).toISOString(),
+      },
+      // Unrelated grid sensor must NOT override meter estimation when disk_power_entity is omitted
+      'sensor.netzbezug': {
+        entity_id: 'sensor.netzbezug',
+        state: '4500',
+        attributes: { unit_of_measurement: 'W', device_class: 'power' },
+      },
+    },
+    callWS: async (msg) => {
+      wsCalled = msg.type === 'history/history_during_period';
+      return {
+        'sensor.heating_kwh': [
+          { s: '12.00', lu: t0 / 1000 },
+          { s: '12.02', lu: t1 / 1000 },
+        ],
+      };
+    },
+  };
+  card._render = () => {};
+
+  // Trigger estimation; history seeding resolves asynchronously
+  card._estimatePowerForItem({ entity: 'sensor.heating_kwh' }, card._hass.states['sensor.heating_kwh'], 12.02, 'kWh');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(wsCalled, true);
+
+  // +0.02 kWh (+20 Wh) over 60s => 1200 W (held within 90s window, NOT 4500 W from unrelated netzbezug)
+  const estimated = card._estimatePowerForItem({ entity: 'sensor.heating_kwh' }, card._hass.states['sensor.heating_kwh'], 12.02, 'kWh');
+  assert.ok(estimated > 1150 && estimated < 1250, `Expected ~1200 W from history, got ${estimated}`);
+});
+
+test('computeFerrarisDrumPositions computes monotonic fractional offset and cascading Geneva carry-over', () => {
+  // Continuous decimal position without premature rounding jump
+  const pos67 = computeFerrarisDrumPositions(12345.67, 1, 6);
+  assert.deepEqual(pos67, [0, 1, 2, 3, 4, 5, 6.7]);
+
+  // Carry-over from tenths (9.7) pulls units roller (5 -> 5.7) smoothly
+  const carrySingle = computeFerrarisDrumPositions(12345.97, 1, 6);
+  assert.deepEqual(carrySingle, [0, 1, 2, 3, 4, 5.7, 9.7]);
+
+  // Multi-digit 99.95 carry cascades across all trailing nines simultaneously
+  const carryMulti = computeFerrarisDrumPositions(199.95, 1, 6);
+  assert.deepEqual(carryMulti, [0, 0, 0, 1.5, 9.5, 9.5, 9.5]);
+
+  // Deterministic formatted serial plate
+  assert.match(ferrarisSerialNumber('sensor.stromzaehler_bezug'), /^21 \d{3} \d{3}$/);
+});
+
+test('drawFerrarisDiscCanvas renders 3D milled disc and calibration mark onto 2D context', () => {
+  const ops = [];
+  const gradientStub = { addColorStop: () => {} };
+  const fakeCanvas = {
+    clientWidth: 220,
+    clientHeight: 13,
+    width: 220,
+    height: 13,
+    getContext: () => ({
+      setTransform: () => ops.push('setTransform'),
+      clearRect: () => ops.push('clearRect'),
+      createLinearGradient: () => gradientStub,
+      fillRect: () => ops.push('fillRect'),
+      save: () => ops.push('save'),
+      restore: () => ops.push('restore'),
+      beginPath: () => ops.push('beginPath'),
+      roundRect: () => ops.push('roundRect'),
+      clip: () => ops.push('clip'),
+    }),
+  };
+  drawFerrarisDiscCanvas(fakeCanvas, 0, -25, false);
+  assert.ok(ops.includes('clip'));
+  assert.ok(ops.filter((o) => o === 'fillRect').length > 50, 'Should render milled graduations and calibration mark');
 });
